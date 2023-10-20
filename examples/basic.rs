@@ -5,11 +5,11 @@ fn main() -> elflib::Result<()> {
     let mut parser = ElfParser::new(&mut content)?;
     let hdr = parser.header()?;
     println!("{:?}", hdr);
-    let mut shdrs = parser.section_headers()?;
+    // let mut shdrs = parser.section_headers()?;
 
-    let mut i = 0;
-    for x in shdrs.iter() {
-        println!("{:?}", x.unwrap().name_offset());
-    }
+    // let mut i = 0;
+    // for x in shdrs.iter() {
+    //     println!("{:?}", x.unwrap().name_offset());
+    // }
     Ok(())
 }

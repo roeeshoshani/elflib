@@ -1,7 +1,6 @@
-use core::num::NonZeroU16;
-
 use binary_serde::{BinarySerde, Endianness};
 use bitflags::bitflags;
+use elflib_macros::{define_raw_struct_by_variants, define_raw_struct_generic_bitlen};
 
 pub struct VirtAddr(pub u64);
 pub struct FileOffset(pub u64);
@@ -9,228 +8,6 @@ pub struct FileOffset(pub u64);
 pub const ELF_MAGIC: &[u8] = &[0x7f, b'E', b'L', b'F'];
 pub const EI_NIDENT: usize = 16;
 pub const ELF_IDENT_PADDING_SIZE: usize = EI_NIDENT - ElfIdentHeader::SERIALIZED_SIZE;
-
-macro_rules! generate_raw_struct_ref {
-    {generate_ref} => {
-        compile_error!("fuck");
-    };
-    {} => {};
-}
-
-macro_rules! generic_bitness_for_each_bit_size {
-    {$value: expr, $inner_ident: ident, $do: block} => {
-        match $value {
-            Self::B32($inner_ident) => $do,
-            Self::B64($inner_ident) => $do,
-        }
-    };
-}
-
-macro_rules! define_raw_struct_generic_bitness_field_ty {
-    {U, $bitness_uint_type: ty} => {
-        $bitness_uint_type
-    };
-    {$field_ty: ty, $bitness_uint_type: ty} => {
-        $field_ty
-    };
-}
-
-macro_rules! define_raw_struct_generic_bitness_field_getset {
-    {$field_name: ident : U} => {
-        pub fn $field_name(&self) -> u64 {
-            generic_bitness_for_each_bit_size!{self, x, {
-                x.$field_name as u64
-            }}
-        }
-
-        paste::paste! {
-            pub fn [<set_ $field_name>](&mut self, new_value: u64) {
-                match self {
-                    Self::B32(x) => x.$field_name = new_value as u32,
-                    Self::B64(x) => x.$field_name = new_value,
-                }
-            }
-        }
-    };
-    {$field_name: ident : $field_ty: ty} => {
-        pub fn $field_name(&self) -> $field_ty {
-            generic_bitness_for_each_bit_size!{self, x, {
-                x.$field_name
-            }}
-        }
-
-        pub fn [<set_ $field_name>](&mut self, new_value: $field_ty) {
-            generic_bitness_for_each_bit_size!{self, x, {
-                x.$field_name = new_value;
-            }}
-        }
-    };
-
-    {$field_name: ident : $field_ty: ty [ref]} => {
-        pub fn $field_name(&self) -> &$field_ty {
-            generic_bitness_for_each_bit_size!{self, x, {
-                &x.$field_name
-            }}
-        }
-
-        paste::paste! {
-            pub fn [<$field_name_mut>](&mut self) -> &mut $field_ty {
-                generic_bitness_for_each_bit_size!{self, x, {
-                    &mut x.$field_name
-                }}
-            }
-            pub fn [<set_ $field_name>](&mut self, new_value: $field_ty) {
-                generic_bitness_for_each_bit_size!{self, x, {
-                    x.$field_name = new_value;
-                }}
-            }
-        }
-    };
-}
-
-macro_rules! define_raw_struct_generic_bitness {
-    {
-        struct $struct_name: ident {
-            $(
-                $field_name: ident : $field_ty: ty $([$ref:tt])?,
-            )+
-        }
-        $($generate_ref: tt)?
-    } => {
-        paste::paste! {
-            pub struct [<$struct_name 32>] {
-                $(
-                    $field_name: define_raw_struct_generic_bitness_field_ty! {$field_ty, u32},
-                )+
-            }
-
-            pub struct [<$struct_name 64>] {
-                $(
-                    $field_name: define_raw_struct_generic_bitness_field_ty! {$field_ty, u64},
-                )+
-            }
-
-            pub enum $struct_name {
-                B32([<$struct_name 32>]),
-                B64([<$struct_name 64>]),
-            }
-
-            impl $struct_name {
-                $(
-                    define_raw_struct_generic_bitness_field_getset!{$field_name : $field_ty $([$ref])?}
-                )+
-            }
-        }
-        generate_raw_struct_ref!{$($generate_ref)?}
-    };
-}
-
-macro_rules! raw_struct_for_each_variant {
-    {$value: expr, [$($variant_name: ident,)+], $inner_ident: ident, $do: block} => {
-        match $value {
-            $(
-                Self::$variant_name($inner_ident) => $do,
-            )+
-        }
-    };
-}
-
-macro_rules! define_raw_struct_by_variants_field_mut_set {
-    {$field_name: ident : $field_ty: ty, $($variant_name: ident,)+} => {
-        paste::paste! {
-            pub fn [<$field_name _mut>](&mut self) -> &mut $field_ty {
-                raw_struct_for_each_variant!{self, [$($variant_name,)+], x, {
-                    &mut x.$field_name
-                }}
-            }
-            pub fn [<set_ $field_name>](&mut self, new_value: $field_ty) {
-                raw_struct_for_each_variant!{self, [$($variant_name,)+], x, {
-                    x.$field_name = new_value;
-                }}
-            }
-        }
-    };
-}
-
-macro_rules! define_raw_struct_by_variants_field_getset {
-    {$field_name: ident : $field_ty: ty, $($variant_name: ident,)+} => {
-        pub fn $field_name(&self) -> $field_ty {
-            raw_struct_for_each_variant!{self, [$($variant_name,)+], x, {
-                x.$field_name
-            }}
-        }
-
-        define_raw_struct_by_variants_field_mut_set!{$field_name : $field_ty, $($variant_name,)+}
-    };
-
-    {$field_name: ident : $field_ty: ty [ref], $($variant_name: ident,)+ } => {
-        pub fn $field_name(&self) -> &$field_ty {
-            generic_bitness_for_each_bit_size!{self, x, {
-                &x.$field_name
-            }}
-        }
-
-        define_raw_struct_by_variants_field_mut_set!{$field_name : $field_ty, $($variant_name,)+}
-    };
-}
-
-macro_rules! define_raw_struct_by_variants {
-    {
-        struct $struct_name: ident {
-            $(
-                $field_name: ident : $field_ty: ty $([$ref: tt])?,
-            )+
-        }
-        variants {
-            $(
-                struct $postfix: ident {
-                    $(
-                        $variant_field_name: ident : $variant_field_ty: ty,
-                    )+
-                }
-            )+
-        }
-        $($generate_ref:tt)?
-    } => {
-        paste::paste!{
-            $(
-                pub struct [<$struct_name $postfix>] {
-                    $(
-                        $variant_field_name : $variant_field_ty,
-                    )+
-                }
-            )+
-            pub enum $struct_name {
-                $(
-                    [<$struct_name $postfix>]([<$struct_name $postfix>]),
-                )+
-            }
-            impl $struct_name {
-                $(
-                    define_raw_struct_by_variants_field_getset! {$field_name : $field_ty, $postfix,}
-                )+
-            }
-        }
-        generate_raw_struct_ref!{$($generate_ref)?}
-    };
-}
-
-define_raw_struct_by_variants! {
-    struct Bla {
-        x: u64,
-        y: String,
-    }
-    variants {
-        struct Mips {
-            x: u32,
-            y: String,
-        }
-        struct Arm {
-            x: u64,
-            y: String,
-        }
-    }
-}
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, BinarySerde)]
 pub struct ElfIdentHeader {
@@ -248,196 +25,63 @@ pub struct ElfIdent {
     pub padding: [u8; ELF_IDENT_PADDING_SIZE],
 }
 
-macro_rules! for_each_bit_size {
-    {$value: expr, $inner_ident: ident, $do: block} => {
-        match $value {
-            Self::B32($inner_ident) => $do,
-            Self::B64($inner_ident) => $do,
-        }
-    };
-}
-
-macro_rules! impl_getset_for_each_bit_size {
-    {$field_name: ident, $type: ty} => {
-        pub fn $field_name(&self) -> $type {
-            for_each_bit_size!(self, x, { x.$field_name })
-        }
-
-        paste::paste! {
-            pub fn [<set_ $field_name>](&mut self, new_value: $type) {
-                for_each_bit_size!(self, x, { x.$field_name = new_value })
-            }
-        }
-    };
-}
-
-macro_rules! impl_getset_ref_for_each_bit_size {
-    {$field_name: ident, $type: ty} => {
-        pub fn $field_name(&self) -> &$type {
-            for_each_bit_size!(self, x, { &x.$field_name })
-        }
-
-        paste::paste! {
-            pub fn [<set_ $field_name>](&mut self, new_value: $type) {
-                for_each_bit_size!(self, x, { x.$field_name = new_value })
-            }
-        }
-    };
-}
-
-macro_rules! impl_getset_with_largest_bit_size {
-    {$field_name: ident} => {
-        pub fn $field_name(&self) -> u64 {
-            for_each_bit_size!(self, x, { x.$field_name as u64 })
-        }
-
-        paste::paste! {
-            pub fn [<set_ $field_name>](&mut self, new_value: u64) {
-                match self {
-                    Self::B32(x) => {
-                        x.$field_name = new_value as u32;
-                    },
-                    Self::B64(x) => {
-                        x.$field_name = new_value;
-                    }
-                }
-            }
-        }
-    };
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Hash, BinarySerde)]
-pub struct ProgramHeader32Bit {
-    ty: ProgramHeaderType,
-    offset: u32,
-    virt_addr: u32,
-    phys_addr: u32,
-    size_in_file: u32,
-    size_in_memory: u32,
-    flags: ProgramHeaderFlags,
-    alignment: u32,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Hash, BinarySerde)]
-pub struct ProgramHeader64Bit {
-    ty: ProgramHeaderType,
-    flags: ProgramHeaderFlags,
-    offset: u64,
-    virt_addr: u64,
-    phys_addr: u64,
-    size_in_file: u64,
-    size_in_memory: u64,
-    alignment: u64,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum ProgramHeader {
-    B32(ProgramHeader32Bit),
-    B64(ProgramHeader64Bit),
-}
-impl ProgramHeader {
-    impl_getset_for_each_bit_size! { ty, ProgramHeaderType }
-    impl_getset_for_each_bit_size! { flags, ProgramHeaderFlags }
-    impl_getset_with_largest_bit_size! { offset }
-    impl_getset_with_largest_bit_size! { virt_addr }
-    impl_getset_with_largest_bit_size! { phys_addr }
-    impl_getset_with_largest_bit_size! { size_in_file }
-    impl_getset_with_largest_bit_size! { size_in_memory }
-    impl_getset_with_largest_bit_size! { alignment }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Hash, BinarySerde)]
-pub struct SectionHeaderOfBitSize<U: BinarySerde> {
-    name_offset: u32,
-    ty: SectionHeaderType,
-    flags: U,
-    address: U,
-    offset: U,
-    size: U,
-    link: SectionIndex<u32>,
-    info: u32,
-    address_alignemnt: U,
-    entry_size: U,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum SectionHeader {
-    B32(SectionHeaderOfBitSize<u32>),
-    B64(SectionHeaderOfBitSize<u64>),
-}
-impl SectionHeader {
-    impl_getset_for_each_bit_size! { name_offset, u32}
-    impl_getset_for_each_bit_size! { ty, SectionHeaderType}
-    impl_getset_for_each_bit_size! { link, SectionIndex<u32>}
-    impl_getset_for_each_bit_size! { info, u32}
-    impl_getset_with_largest_bit_size! { flags }
-    impl_getset_with_largest_bit_size! { address }
-    impl_getset_with_largest_bit_size! { offset }
-    impl_getset_with_largest_bit_size! { size }
-    impl_getset_with_largest_bit_size! { address_alignemnt }
-    impl_getset_with_largest_bit_size! { entry_size }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum ElfHeader {
-    B32(ElfHeaderOfBitSize<u32>),
-    B64(ElfHeaderOfBitSize<u64>),
-}
-impl ElfHeader {
-    impl_getset_ref_for_each_bit_size! {ident, ElfIdent}
-    pub fn ident_mut(&mut self) -> &mut ElfIdent {
-        for_each_bit_size!(self, x, { &mut x.ident })
+define_raw_struct_by_variants! {
+    struct ProgramHeader32 {
+        ty: ProgramHeaderType,
+        offset: u32,
+        virt_addr: u32,
+        phys_addr: u32,
+        size_in_file: u32,
+        size_in_memory: u32,
+        flags: ProgramHeaderFlags,
+        alignment: u32,
     }
-
-    impl_getset_for_each_bit_size! {ty, ElfFileType}
-    impl_getset_for_each_bit_size! {arch, Architechture}
-    impl_getset_for_each_bit_size! {version, ElfVersion}
-    impl_getset_with_largest_bit_size! {entry}
-    impl_getset_with_largest_bit_size! {program_headers_off}
-    impl_getset_with_largest_bit_size! {section_headers_off}
-    impl_getset_for_each_bit_size! {flags, ElfFlags}
-    impl_getset_for_each_bit_size! {header_size, u16}
-    impl_getset_for_each_bit_size! {program_header_entry_size, u16}
-    impl_getset_for_each_bit_size! {program_headers_amount, u16}
-    impl_getset_for_each_bit_size! {section_header_entry_size, u16}
-    impl_getset_for_each_bit_size! {section_headers_amount, u16}
-    impl_getset_for_each_bit_size! {section_header_strings_section_index, SectionIndex<u16>}
+    struct ProgramHeader64 {
+        ty: ProgramHeaderType,
+        flags: ProgramHeaderFlags,
+        offset: u64,
+        virt_addr: u64,
+        phys_addr: u64,
+        size_in_file: u64,
+        size_in_memory: u64,
+        alignment: u64,
+    }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, BinarySerde)]
-pub struct ElfHeaderOfBitSize<U: BinarySerde> {
-    pub ident: ElfIdent,
-    pub ty: ElfFileType,
-    pub arch: Architechture,
-    pub version: ElfVersion,
-    pub padding: u16,
-    pub entry: U,
-    pub program_headers_off: U,
-    pub section_headers_off: U,
-    pub flags: ElfFlags,
-    pub header_size: u16,
-    pub program_header_entry_size: u16,
-    pub program_headers_amount: u16,
-    pub section_header_entry_size: u16,
-    pub section_headers_amount: u16,
-    pub section_header_strings_section_index: Option<NonZeroU16>,
+define_raw_struct_generic_bitlen! {
+    struct SectionHeader {
+        name_offset: u32,
+        ty: SectionHeaderType,
+        flags: U,
+        address: U,
+        offset: U,
+        size: U,
+        link: u32,
+        info: u32,
+        address_alignemnt: U,
+        entry_size: U,
+    }
 }
 
-// #[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
-// pub struct SectionIndex<U: BinarySerde>(U);
-// impl SectionIndex<u32> {
-//     pub fn parse(&self) -> ParsedSectionIndex {
-//         ParsedSectionIndex::parse(self.0)
-//     }
-// }
-// impl SectionIndex<u16> {
-//     pub fn parse(&self) -> ParsedSectionIndex {
-//         ParsedSectionIndex::parse(self.0 as u32)
-//     }
-// }
-// impl ParsedSectionIndex {
-//     fn parse(index: u32) -> Self {}
-// }
+define_raw_struct_generic_bitlen! {
+    struct ElfHeader {
+        ident: ElfIdent,
+        ty: ElfFileType,
+        arch: Architechture,
+        version: ElfVersion,
+        padding: u16,
+        entry: U,
+        program_headers_off: U,
+        section_headers_off: U,
+        flags: ElfFlags,
+        header_size: u16,
+        program_header_entry_size: u16,
+        program_headers_amount: u16,
+        section_header_entry_size: u16,
+        section_headers_amount: u16,
+        section_header_strings_section_index: u16,
+    }
+}
 
 #[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -463,8 +107,8 @@ pub enum ElfEndianness {
     Little = 1,
     Big = 2,
 }
-impl ElfEndianness {
-    pub(crate) fn to_binary_serde_endianness(&self) -> Endianness {
+impl Into<binary_serde::Endianness> for ElfEndianness {
+    fn into(self) -> binary_serde::Endianness {
         match self {
             ElfEndianness::Little => Endianness::Little,
             ElfEndianness::Big => Endianness::Big,
