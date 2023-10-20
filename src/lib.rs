@@ -1,25 +1,27 @@
 use core::marker::PhantomData;
 
-use binary_serde::{BinarySerde, BinarySerdeBufSafe, Endianness};
+use binary_serde::{BinaryDeserializerFromBufSafe, BinarySerde, Endianness};
 use bitflags::bitflags;
 use elf_types::{
-    ArchBitSize, ElfHeader, ElfHeaderOfBitSize, ElfIdent, OsAbi, ProgramHeader, SectionHeader,
-    SectionHeaderOfBitSize, EI_NIDENT, ELF_MAGIC,
+    ArchBitSize, ElfHeader, ElfHeaderOfBitSize, ElfIdent, OsAbi, ProgramHeader,
+    SectionHeaderOfBitSize, SectionHeaderType, SectionIndex, EI_NIDENT, ELF_MAGIC,
 };
 use thiserror_no_std::Error;
 
 use crate::elf_types::{ProgramHeader32Bit, ProgramHeader64Bit};
 mod elf_types;
 
+#[derive(Debug, Clone)]
 pub struct ElfParser<'a> {
-    serde: BinarySerdeBufSafe<'a>,
+    data: &'a [u8],
+    endianness: Endianness,
     bit_size: ArchBitSize,
     os_abi: OsAbi,
 }
 impl<'a> ElfParser<'a> {
-    pub fn new(data: &'a mut [u8]) -> Result<Self> {
+    pub fn new(data: &'a [u8]) -> Result<Self> {
         // first extract the ident array to get some information about the binary and to make sure that it is valid
-        let mut ident_deserializer = BinarySerdeBufSafe::new(
+        let mut ident_deserializer = BinaryDeserializerFromBufSafe::new(
             data,
             // endianness doesn't matter here because we only use this deserialize to parse the elf ident, which is basically just
             // a byte array.
@@ -33,53 +35,33 @@ impl<'a> ElfParser<'a> {
         }
 
         Ok(Self {
-            serde: BinarySerdeBufSafe::new(
-                data,
-                ident.header.endianness.to_binary_serde_endianness(),
-            ),
+            data,
+            endianness: ident.header.endianness.to_binary_serde_endianness(),
             bit_size: ident.header.bit_size,
             os_abi: ident.header.os_abi,
         })
     }
 
+    fn deserializer(&self) -> BinaryDeserializerFromBufSafe<'a> {
+        BinaryDeserializerFromBufSafe::new(self.data, self.endianness)
+    }
+
     pub fn header(&mut self) -> Result<ElfHeader> {
-        self.serde.set_position(0);
         match self.bit_size {
-            ArchBitSize::Arch32Bit => Ok(ElfHeader::B32(self.serde.deserialize()?)),
-            ArchBitSize::Arch64Bit => Ok(ElfHeader::B64(self.serde.deserialize()?)),
+            ArchBitSize::Arch32Bit => Ok(ElfHeader::B32(self.deserializer().deserialize()?)),
+            ArchBitSize::Arch64Bit => Ok(ElfHeader::B64(self.deserializer().deserialize()?)),
         }
     }
 
-    pub fn set_header(&mut self, new_header: ElfHeader) -> Result<()> {
-        self.serde.set_position(0);
-        let endianness = new_header
-            .ident()
-            .header
-            .endianness
-            .to_binary_serde_endianness();
-        self.serde.set_endianness(endianness);
-        match new_header {
-            ElfHeader::B32(hdr) => self.serde.serialize(&hdr)?,
-            ElfHeader::B64(hdr) => self.serde.serialize(&hdr)?,
-        }
-        Ok(())
-    }
-
-    pub fn section_headers<'p>(&'p mut self) -> Result<SectionHeaders<'p, 'a>> {
-        fn serialize_section_header(
-            serde: &mut BinarySerdeBufSafe,
-            value: &SectionHeader,
-        ) -> Result<()> {
-            match value {
-                SectionHeader::B32(hdr) => serde.serialize(hdr)?,
-                SectionHeader::B64(hdr) => serde.serialize(hdr)?,
-            }
-            Ok(())
-        }
-        fn deserialize_section_header_32(serde: &mut BinarySerdeBufSafe) -> Result<SectionHeader> {
+    pub fn section_headers(&mut self) -> Result<SectionHeaders<'a>> {
+        fn deserialize_section_header_32(
+            serde: &mut BinaryDeserializerFromBufSafe,
+        ) -> Result<SectionHeader> {
             Ok(SectionHeader::B32(serde.deserialize()?))
         }
-        fn deserialize_section_header_64(serde: &mut BinarySerdeBufSafe) -> Result<SectionHeader> {
+        fn deserialize_section_header_64(
+            serde: &mut BinaryDeserializerFromBufSafe,
+        ) -> Result<SectionHeader> {
             Ok(SectionHeader::B64(serde.deserialize()?))
         }
 
@@ -88,41 +70,34 @@ impl<'a> ElfParser<'a> {
             ArchBitSize::Arch32Bit => (
                 SectionHeaderOfBitSize::<u32>::SERIALIZED_SIZE,
                 deserialize_section_header_32
-                    as fn(&mut BinarySerdeBufSafe) -> Result<SectionHeader>,
+                    as fn(&mut BinaryDeserializerFromBufSafe) -> Result<SectionHeader>,
             ),
             ArchBitSize::Arch64Bit => (
                 SectionHeaderOfBitSize::<u64>::SERIALIZED_SIZE,
                 deserialize_section_header_64
-                    as fn(&mut BinarySerdeBufSafe) -> Result<SectionHeader>,
+                    as fn(&mut BinaryDeserializerFromBufSafe) -> Result<SectionHeader>,
             ),
         };
 
         Ok(SectionHeaders(ElfRecordsTable {
             record_size,
             records_amount: elf_hdr.section_headers_amount() as usize,
-            serde: &mut self.serde,
             deserialize_fn,
-            serialize_fn: serialize_section_header,
             table_offset: elf_hdr.section_headers_off() as usize,
             phantom: PhantomData,
+            parser: self.clone(),
         }))
     }
 
-    pub fn program_headers<'p>(&'p mut self) -> Result<ProgramHeaders<'p, 'a>> {
-        fn serialize_program_header(
-            serde: &mut BinarySerdeBufSafe,
-            value: &ProgramHeader,
-        ) -> Result<()> {
-            match value {
-                ProgramHeader::B32(hdr) => serde.serialize(hdr)?,
-                ProgramHeader::B64(hdr) => serde.serialize(hdr)?,
-            }
-            Ok(())
-        }
-        fn deserialize_program_header_32(serde: &mut BinarySerdeBufSafe) -> Result<ProgramHeader> {
+    pub fn program_headers<'p>(&'p mut self) -> Result<ProgramHeaders<'a>> {
+        fn deserialize_program_header_32(
+            serde: &mut BinaryDeserializerFromBufSafe,
+        ) -> Result<ProgramHeader> {
             Ok(ProgramHeader::B32(serde.deserialize()?))
         }
-        fn deserialize_program_header_64(serde: &mut BinarySerdeBufSafe) -> Result<ProgramHeader> {
+        fn deserialize_program_header_64(
+            serde: &mut BinaryDeserializerFromBufSafe,
+        ) -> Result<ProgramHeader> {
             Ok(ProgramHeader::B64(serde.deserialize()?))
         }
 
@@ -131,93 +106,97 @@ impl<'a> ElfParser<'a> {
             ArchBitSize::Arch32Bit => (
                 ProgramHeader32Bit::SERIALIZED_SIZE,
                 deserialize_program_header_32
-                    as fn(&mut BinarySerdeBufSafe) -> Result<ProgramHeader>,
+                    as fn(&mut BinaryDeserializerFromBufSafe) -> Result<ProgramHeader>,
             ),
             ArchBitSize::Arch64Bit => (
                 ProgramHeader64Bit::SERIALIZED_SIZE,
                 deserialize_program_header_64
-                    as fn(&mut BinarySerdeBufSafe) -> Result<ProgramHeader>,
+                    as fn(&mut BinaryDeserializerFromBufSafe) -> Result<ProgramHeader>,
             ),
         };
 
         Ok(ProgramHeaders(ElfRecordsTable {
             record_size,
             records_amount: elf_hdr.program_headers_amount() as usize,
-            serde: &mut self.serde,
             deserialize_fn,
-            serialize_fn: serialize_program_header,
             table_offset: elf_hdr.program_headers_off() as usize,
             phantom: PhantomData,
+            parser: self.clone(),
         }))
     }
 }
 
-pub struct SectionHeaders<'p, 'a>(ElfRecordsTable<'p, 'a, SectionHeader>);
-impl<'p, 'a> SectionHeaders<'p, 'a> {
+macro_rules! impl_get_raw_passthrough {
+    {$field_name: ident, $type: ty} => {
+        pub fn $field_name(&self) -> $type {
+            self.raw.$field_name()
+        }
+    };
+}
+
+pub struct SectionHeader<'a> {
+    raw: elf_types::SectionHeader,
+    parser: ElfParser<'a>,
+}
+impl<'a> SectionHeader<'a> {
+    pub fn raw(&self) -> elf_types::SectionHeader {
+        self.raw
+    }
+    pub fn name(&self) -> Result<&'a str> {
+        self.parser.header()?.section_header_strings_section_index()
+        self.raw.name_offset()
+    }
+}
+
+pub struct SectionHeaders<'a>(ElfRecordsTable<'a, SectionHeader>);
+impl<'a> SectionHeaders<'a> {
     pub fn index(&mut self, index: usize) -> Result<SectionHeader> {
         self.0.index(index)
     }
-    pub fn set_index(&mut self, index: usize, new_value: &SectionHeader) -> Result<()> {
-        self.0.set_index(index, new_value)
-    }
-    pub fn iter(self) -> SectionHeadersIter<'p, 'a> {
+    pub fn iter(self) -> SectionHeadersIter<'a> {
         self.0.iter()
     }
 }
-pub type SectionHeadersIter<'p, 'a> = ElfRecordsTableIter<'p, 'a, SectionHeader>;
+pub type SectionHeadersIter<'a> = ElfRecordsTableIter<'a, SectionHeader>;
 
-pub struct ProgramHeaders<'p, 'a>(ElfRecordsTable<'p, 'a, ProgramHeader>);
-impl<'p, 'a> ProgramHeaders<'p, 'a> {
+pub struct ProgramHeaders<'a>(ElfRecordsTable<'a, ProgramHeader>);
+impl<'a> ProgramHeaders<'a> {
     pub fn index(&mut self, index: usize) -> Result<ProgramHeader> {
         self.0.index(index)
     }
-    pub fn set_index(&mut self, index: usize, new_value: &ProgramHeader) -> Result<()> {
-        self.0.set_index(index, new_value)
-    }
-    pub fn iter(self) -> ProgramHeadersIter<'p, 'a> {
+    pub fn iter(self) -> ProgramHeadersIter<'a> {
         self.0.iter()
     }
 }
-pub type ProgramHeadersIter<'p, 'a> = ElfRecordsTableIter<'p, 'a, ProgramHeader>;
+pub type ProgramHeadersIter<'a> = ElfRecordsTableIter<'a, ProgramHeader>;
 
-pub struct ElfRecordsTable<'p, 'a, E> {
+pub struct ElfRecordsTable<'a, E> {
     record_size: usize,
     records_amount: usize,
-    serde: &'p mut BinarySerdeBufSafe<'a>,
-    deserialize_fn: fn(&mut BinarySerdeBufSafe) -> Result<E>,
-    serialize_fn: fn(&mut BinarySerdeBufSafe, &E) -> Result<()>,
+    parser: ElfParser<'a>,
+    deserialize_fn: fn(&mut BinaryDeserializerFromBufSafe, ElfParser) -> Result<E>,
     table_offset: usize,
     phantom: PhantomData<E>,
 }
-impl<'p, 'a, E> ElfRecordsTable<'p, 'a, E> {
-    pub fn index(&mut self, index: usize) -> Result<E> {
+impl<'a, E> ElfRecordsTable<'a, E> {
+    pub fn index(&self, index: usize) -> Result<E> {
         if index >= self.records_amount {
             return Err(Error::RecordIndexOutOfBounds {
                 index,
                 records_amount: self.records_amount,
             });
         }
-        self.serde
-            .set_position(self.table_offset + index * self.record_size);
-        (self.deserialize_fn)(self.serde)
+        let mut deserializer = self.parser.deserializer();
+        deserializer.set_position(self.table_offset + index * self.record_size);
+        (self.deserialize_fn)(&mut deserializer, self.parser.clone())
     }
 
-    pub fn set_index(&mut self, index: usize, new_value: &E) -> Result<()> {
-        if index >= self.records_amount {
-            return Err(Error::RecordIndexOutOfBounds {
-                index,
-                records_amount: self.records_amount,
-            });
-        }
-        self.serde
-            .set_position(self.table_offset + index * self.record_size);
-        (self.serialize_fn)(self.serde, new_value)
-    }
-
-    pub fn iter(self) -> ElfRecordsTableIter<'p, 'a, E> {
-        self.serde.set_position(self.table_offset);
+    pub fn iter(&self) -> ElfRecordsTableIter<'a, E> {
+        let mut deserializer = self.parser.deserializer();
+        deserializer.set_position(self.table_offset);
         ElfRecordsTableIter {
-            serde: self.serde,
+            parser: self.parser,
+            deserializer,
             deserialize_fn: self.deserialize_fn,
             cur_index: 0,
             records_amount: self.records_amount,
@@ -226,14 +205,15 @@ impl<'p, 'a, E> ElfRecordsTable<'p, 'a, E> {
     }
 }
 
-pub struct ElfRecordsTableIter<'p, 'a, E> {
-    serde: &'p mut BinarySerdeBufSafe<'a>,
-    deserialize_fn: fn(&mut BinarySerdeBufSafe) -> Result<E>,
+pub struct ElfRecordsTableIter<'a, E> {
+    parser: ElfParser<'a>,
+    deserializer: BinaryDeserializerFromBufSafe<'a>,
+    deserialize_fn: fn(&mut BinaryDeserializerFromBufSafe, ElfParser) -> Result<E>,
     cur_index: usize,
     records_amount: usize,
     phantom: PhantomData<E>,
 }
-impl<'p, 'a, E> Iterator for ElfRecordsTableIter<'p, 'a, E> {
+impl<'a, E> Iterator for ElfRecordsTableIter<'a, E> {
     type Item = Result<E>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -241,7 +221,10 @@ impl<'p, 'a, E> Iterator for ElfRecordsTableIter<'p, 'a, E> {
             return None;
         }
         self.cur_index += 1;
-        Some((self.deserialize_fn)(self.serde))
+        Some((self.deserialize_fn)(
+            &mut self.deserializer,
+            self.parser.clone(),
+        ))
     }
 }
 
