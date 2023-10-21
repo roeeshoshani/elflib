@@ -92,6 +92,50 @@ impl<'a> ElfParser<'a> {
             "section header",
         ))
     }
+
+    fn get_offset_range_content(
+        &self,
+        offset: usize,
+        len: usize,
+        offset_range_of_what: &'static str,
+    ) -> Result<&'a [u8]> {
+        let offset_range = offset..offset + len;
+        self.data
+            .get(offset_range.clone())
+            .ok_or(Error::OffsetRangeOutOfBounds {
+                offset_range,
+                file_len: self.data.len(),
+                offset_range_of_what,
+            })
+    }
+}
+
+impl<'a> SectionHeaderRef<'a> {
+    pub fn content(&self) -> Result<&'a [u8]> {
+        self.parser.0.get_offset_range_content(
+            self.offset() as usize,
+            self.size() as usize,
+            "section header",
+        )
+    }
+}
+struct X;
+impl ::core::ops::Deref for X {
+    type Target;
+
+    fn deref(&self) -> &Self::Target {
+        todo!()
+    }
+}
+
+impl<'a> ProgramHeaderRef<'a> {
+    pub fn content(&self) -> Result<&'a [u8]> {
+        self.parser.0.get_offset_range_content(
+            self.offset() as usize,
+            self.size_in_file() as usize,
+            "program header",
+        )
+    }
 }
 
 pub type ProgramHeaders<'a> = ElfRecordsTable<'a, ProgramHeaderRef<'a>>;
@@ -199,6 +243,15 @@ pub enum Error {
         record_name: &'static str,
         index: usize,
         records_amount: usize,
+    },
+
+    #[error(
+        "the file offset range {offset_range:?} of {offset_range_of_what}is out of bounds of file with length {file_len}"
+    )]
+    OffsetRangeOutOfBounds {
+        offset_range: core::ops::Range<usize>,
+        file_len: usize,
+        offset_range_of_what: &'static str,
     },
 }
 
