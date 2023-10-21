@@ -11,9 +11,9 @@ use thiserror_no_std::Error;
 
 pub const SHN_UNDEF: u16 = 0;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ElfParser<'a> {
-    data: &'a [u8],
+    data: DebugIgnore<&'a [u8]>,
     file_info: ElfFileInfo,
 }
 impl<'a> ElfParser<'a> {
@@ -33,7 +33,7 @@ impl<'a> ElfParser<'a> {
         }
 
         Ok(Self {
-            data,
+            data: data.into(),
             file_info: ElfFileInfo {
                 endianness: ident.header.endianness.into(),
                 bit_length: ident.header.bit_size,
@@ -43,7 +43,7 @@ impl<'a> ElfParser<'a> {
     }
 
     fn deserializer(&self) -> BinaryDeserializerFromBufSafe<'a> {
-        BinaryDeserializerFromBufSafe::new(self.data, self.file_info.endianness)
+        BinaryDeserializerFromBufSafe::new(self.data.0, self.file_info.endianness)
     }
 
     fn deserializer_at_offset(&self, offset: usize) -> BinaryDeserializerFromBufSafe<'a> {
@@ -119,7 +119,7 @@ impl<'a> ElfParser<'a> {
         }
         self.section_headers()?
             .get(section_names_section_index as usize)?
-            .as_string_table()?
+            .as_strtab()?
             .ok_or(Error::SectionNamesSectionIsNotAStringTable)
     }
 }
@@ -129,7 +129,7 @@ impl<'a> SectionHeaderRef<'a> {
         self.parser.get_offset_range_content(
             self.offset() as usize,
             self.size() as usize,
-            "section header",
+            "section header content",
         )
     }
 
@@ -139,7 +139,7 @@ impl<'a> SectionHeaderRef<'a> {
             .string_at_offset(self.name_offset() as usize, "section name")
     }
 
-    pub fn as_string_table(&self) -> Result<Option<StringTable<'a>>> {
+    pub fn as_strtab(&self) -> Result<Option<StringTable<'a>>> {
         if *self.ty() != SectionHeaderType::Strtab {
             return Ok(None);
         }
@@ -147,7 +147,11 @@ impl<'a> SectionHeaderRef<'a> {
             content: self.content()?.into(),
         }))
     }
+
+    // pub fn as_rela(&self) -> Result<Option> {}
 }
+
+// pub type RelaSection<'a> = ElfRecordsTable<'a, ElfRel>
 
 #[derive(Clone)]
 pub struct StringTable<'a> {
@@ -170,11 +174,11 @@ impl<'a> StringTable<'a> {
 }
 
 impl<'a> ProgramHeaderRef<'a> {
-    pub fn content(&self) -> Result<&'a [u8]> {
+    pub fn content_in_file(&self) -> Result<&'a [u8]> {
         self.parser.get_offset_range_content(
             self.offset() as usize,
             self.size_in_file() as usize,
-            "program header",
+            "program header content",
         )
     }
 }
@@ -185,6 +189,7 @@ pub type ProgramHeadersIter<'a> = ElfRecordsTableIter<'a, ProgramHeaderRef<'a>>;
 pub type SectionHeaders<'a> = ElfRecordsTable<'a, SectionHeaderRef<'a>>;
 pub type SectionHeadersIter<'a> = ElfRecordsTableIter<'a, SectionHeaderRef<'a>>;
 
+#[derive(Debug, Clone)]
 pub struct ElfRecordsTable<'a, T: VariantStructBinaryDeserialize<'a>> {
     parser: ElfParser<'a>,
     table_start_offset: usize,
@@ -213,7 +218,10 @@ impl<'a, T: VariantStructBinaryDeserialize<'a>> ElfRecordsTable<'a, T> {
             parser: self.parser.clone(),
             table_records_amount: self.table_records_amount,
             cur_record_index: 0,
-            deserializer: self.parser.deserializer_at_offset(self.table_start_offset),
+            deserializer: self
+                .parser
+                .deserializer_at_offset(self.table_start_offset)
+                .into(),
             phantom: PhantomData,
         }
     }
@@ -238,11 +246,12 @@ impl<'r, 'a, T: VariantStructBinaryDeserialize<'a>> IntoIterator for &'r ElfReco
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ElfRecordsTableIter<'a, T: VariantStructBinaryDeserialize<'a>> {
     parser: ElfParser<'a>,
     table_records_amount: usize,
     cur_record_index: usize,
-    deserializer: BinaryDeserializerFromBufSafe<'a>,
+    deserializer: DebugIgnore<BinaryDeserializerFromBufSafe<'a>>,
     phantom: PhantomData<T>,
 }
 impl<'a, T: VariantStructBinaryDeserialize<'a>> Iterator for ElfRecordsTableIter<'a, T> {

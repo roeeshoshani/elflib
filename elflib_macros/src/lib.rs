@@ -219,7 +219,7 @@ fn gen_ref_wrapper(
             ) -> ::core::result::Result<Self, ::binary_serde::BinarySerdeBufSafeError> {
                 Ok(Self {
                     raw: #wrapped_type_ident::deserialize(deserializer, parser)?,
-                    parser: DebugIgnore(parser.clone()),
+                    parser: parser.clone(),
                 })
             }
             fn record_len(file_info: &ElfFileInfo) -> usize {
@@ -231,7 +231,7 @@ fn gen_ref_wrapper(
         #wrapper_derives
         pub struct #wrapper_ident<'a> {
             pub(crate) raw: #wrapped_type_ident,
-            pub(crate) parser: DebugIgnore<ElfParser<'a>>,
+            pub(crate) parser: ElfParser<'a>,
         }
 
         impl<'a> #wrapper_ident<'a> {
