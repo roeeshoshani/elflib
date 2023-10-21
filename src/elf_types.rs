@@ -1,18 +1,31 @@
-use binary_serde::{BinarySerde, Endianness};
+use crate::{ElfParser, VariantStructBinaryDeserialize};
+use binary_serde::{impl_binary_serde_for_bitflags_ty, BinarySerde, Endianness};
 use bitflags::bitflags;
 use elflib_macros::{define_raw_struct_by_variants, define_raw_struct_generic_bitlen};
-
-pub struct VirtAddr(pub u64);
-pub struct FileOffset(pub u64);
 
 pub const ELF_MAGIC: &[u8] = &[0x7f, b'E', b'L', b'F'];
 pub const EI_NIDENT: usize = 16;
 pub const ELF_IDENT_PADDING_SIZE: usize = EI_NIDENT - ElfIdentHeader::SERIALIZED_SIZE;
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct DebugIgnore<T>(pub(crate) T);
+impl<T> core::fmt::Debug for DebugIgnore<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "...")
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub struct ElfFileInfo {
+    pub endianness: Endianness,
+    pub bit_length: ArchBitLength,
+    pub os_abi: OsAbi,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Hash, BinarySerde)]
 pub struct ElfIdentHeader {
     pub magic: [u8; ELF_MAGIC.len()],
-    pub bit_size: ArchBitSize,
+    pub bit_size: ArchBitLength,
     pub endianness: ElfEndianness,
     pub elf_version: ElfVersionInIdent,
     pub os_abi: OsAbi,
@@ -69,7 +82,6 @@ define_raw_struct_generic_bitlen! {
         ty: ElfFileType,
         arch: Architechture,
         version: ElfVersion,
-        padding: u16,
         entry: U,
         program_headers_off: U,
         section_headers_off: U,
@@ -96,7 +108,7 @@ pub enum ElfVersionInIdent {
 }
 
 #[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum ElfVersion {
     Current = 1,
 }
@@ -107,18 +119,26 @@ pub enum ElfEndianness {
     Little = 1,
     Big = 2,
 }
-impl Into<binary_serde::Endianness> for ElfEndianness {
-    fn into(self) -> binary_serde::Endianness {
-        match self {
+impl From<ElfEndianness> for binary_serde::Endianness {
+    fn from(value: ElfEndianness) -> Self {
+        match value {
             ElfEndianness::Little => Endianness::Little,
             ElfEndianness::Big => Endianness::Big,
+        }
+    }
+}
+impl From<binary_serde::Endianness> for ElfEndianness {
+    fn from(value: binary_serde::Endianness) -> Self {
+        match value {
+            Endianness::Little => ElfEndianness::Little,
+            Endianness::Big => ElfEndianness::Big,
         }
     }
 }
 
 #[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
-pub enum ArchBitSize {
+pub enum ArchBitLength {
     Arch32Bit = 1,
     Arch64Bit = 2,
 }
@@ -455,7 +475,7 @@ pub enum Architechture {
     /// Intel K10M
     K10M = 0xb5,
     /// ARM AARCH64
-    Aarch64 = 0xb7,
+    AArch64 = 0xb7,
     /// Amtel 32-bit microprocessor
     Avr32 = 0xb9,
     /// STMicroelectronics STM8
@@ -602,10 +622,9 @@ pub enum ProgramHeaderType {
     Ia64HpStack = 0x700000c5,
 }
 
-#[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ProgramHeaderFlags(u32);
 bitflags! {
-    impl ProgramHeaderFlags: u32 {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct ProgramHeaderFlags: u32 {
         /// Segment is executable
         const X = 0x1;
         /// Segment is writable
@@ -634,6 +653,7 @@ bitflags! {
         const IA_64_NORECOV = 0x80000000;
     }
 }
+impl_binary_serde_for_bitflags_ty! {ProgramHeaderFlags}
 
 #[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u32)]
@@ -760,10 +780,9 @@ pub enum SectionHeaderType {
     Ia64Unwind = 0x70000033,
 }
 
-#[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SectionHeaderFlags(u32);
 bitflags! {
-    impl SectionHeaderFlags: u32 {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct SectionHeaderFlags: u32 {
         /// Writable
         const WRITE = 0x1;
         /// Occupies memory during execution
@@ -805,6 +824,7 @@ bitflags! {
         const MIPS_NODUPE = 0x1000000;
     }
 }
+impl_binary_serde_for_bitflags_ty! {SectionHeaderFlags}
 
 pub enum SymbolType {
     /// Symbol type is unspecified
@@ -875,8 +895,8 @@ pub enum DynamicTag {
     HashOrPpc64Num = 0x4,
     /// Address of string table
     Strtab = 0x5,
-    /// Address of symbol table Or Aarch64Num
-    SymtabOrAarch64Num = 0x6,
+    /// Address of symbol table Or AArch64Num
+    SymtabOrAArch64Num = 0x6,
     /// Address of Rela relocs
     Rela = 0x7,
     /// Total size of Rela relocs
@@ -1070,9 +1090,9 @@ pub enum DynamicTag {
     Ppc64Opd = 0x39,
     Ppc64Opdsz = 0x3b,
     Ppc64Opt = 0x3e,
-    Aarch64BtiPlt = 0x3f,
-    Aarch64PacPlt = 0x42,
-    Aarch64VariantPcsOrIa64PltReserve = 0x47,
+    AArch64BtiPlt = 0x3f,
+    AArch64PacPlt = 0x42,
+    AArch64VariantPcsOrIa64PltReserve = 0x47,
 }
 
 pub enum NoteType {
@@ -1199,10 +1219,9 @@ pub enum NoteType {
     FdoPackagingMetadata = 0xcafe1a7e,
 }
 
-#[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ElfFlags(u32);
 bitflags! {
-    impl ElfFlags: u32 {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct ElfFlags: u32 {
         const CPU32 = 0x810000;
         const SPARCV9_MM_OR_PPC64_ABI_OR_SH3 = 0x3;
         /// SPARCV9_TSO Or -mips1 code Or ARM_EABI_UNKNOWN Or SH_UNKNOWN Or RISCV_FLOAT_ABI_SOFT
@@ -1291,3 +1310,4 @@ bitflags! {
 
     }
 }
+impl_binary_serde_for_bitflags_ty! {ElfFlags}

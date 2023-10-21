@@ -163,15 +163,15 @@ fn gen_struct_derives() -> proc_macro2::TokenStream {
     }
 }
 
-fn gen_wrapper_derives() -> proc_macro2::TokenStream {
+fn gen_ref_wrapper_derives() -> proc_macro2::TokenStream {
     quote! {
-        #[derive(Debug)]
+        #[derive(Clone, Debug)]
     }
 }
 
 fn gen_enum_derives() -> proc_macro2::TokenStream {
     quote! {
-        #[derive(Debug)]
+        #[derive(Debug, PartialEq, Eq, Clone, Hash)]
     }
 }
 
@@ -198,41 +198,77 @@ fn gen_ref_wrapper(
     field_type_by_name: &HashMap<String, VariantsFieldTypeInfo>,
 ) -> proc_macro2::TokenStream {
     let wrapper_ident = quote::format_ident!("{}Ref", wrapped_type_ident);
-    let wrapper_derives = gen_wrapper_derives();
+    let wrapper_derives = gen_ref_wrapper_derives();
     let methods = field_names.iter().map(|field_name| {
         let field_type_info = &field_type_by_name[field_name];
         let field_ty = field_type_info.field_type.to_syn_type();
         let field_methods = field_type_info
             .field_access_methods()
             .iter()
-            .map(|access_method| {
-                let method_ident = access_method.method_ident(field_name);
-                access_method.build_method(
-                    field_name,
-                    &field_ty,
-                    match access_method {
-                        FieldAccessMethod::Get => quote! {self.raw.#method_ident()},
-                        FieldAccessMethod::Set => quote! {self.raw.#method_ident(new_value)},
-                        FieldAccessMethod::GetByRef => quote! {self.raw.#method_ident()},
-                        FieldAccessMethod::GetMut => quote! {self.raw.#method_ident()},
-                    },
-                )
+            .map(|access_method| match access_method {
+                FieldAccessMethod::Get | FieldAccessMethod::GetByRef => {
+                    let method_ident = access_method.method_ident(field_name);
+                    access_method.build_method(
+                        field_name,
+                        &field_ty,
+                        quote! {self.raw.#method_ident()},
+                    )
+                }
+                _ => quote! {},
             });
         quote! {
             #(#field_methods)*
         }
     });
+    let deserialize_impl = quote! {
+        #[automatically_derived]
+        impl<'a> VariantStructBinaryDeserialize<'a> for #wrapper_ident<'a>
+            where #wrapped_type_ident: VariantStructBinaryDeserialize<'a>
+        {
+            fn deserialize(
+                deserializer: &mut ::binary_serde::BinaryDeserializerFromBufSafe<'a>,
+                parser: &ElfParser<'a>,
+            ) -> ::core::result::Result<Self, ::binary_serde::BinarySerdeBufSafeError> {
+                Ok(Self {
+                    raw: #wrapped_type_ident::deserialize(deserializer, parser)?,
+                    parser: DebugIgnore(parser.clone()),
+                })
+            }
+            fn record_len(file_info: &ElfFileInfo) -> usize {
+                #wrapped_type_ident::record_len(file_info)
+            }
+        }
+    };
     quote! {
         #wrapper_derives
         pub struct #wrapper_ident<'a> {
-            raw: #wrapped_type_ident,
-            bytes: &'a [u8],
+            pub(crate) raw: #wrapped_type_ident,
+            pub(crate) parser: DebugIgnore<ElfParser<'a>>,
         }
 
         impl<'a> #wrapper_ident<'a> {
             #(#methods)*
+            pub fn raw(&self) -> &#wrapped_type_ident {
+                &self.raw
+            }
         }
+
+        #deserialize_impl
     }
+}
+
+fn are_variants_of_generic_bitlen_struct(variants: &[syn::ItemStruct]) -> bool {
+    let sorted_names = {
+        let mut names: Vec<String> = variants
+            .iter()
+            .map(|variant| variant.ident.to_string())
+            .collect();
+        names.sort();
+        names
+    };
+    let prefix = variants_find_common_name_prefix(variants);
+    let generic_bitlen_names = [format!("{}32", prefix), format!("{}64", prefix)];
+    sorted_names.as_slice() == generic_bitlen_names.as_slice()
 }
 
 fn gen_raw_struct_by_variants(
@@ -300,6 +336,33 @@ fn gen_raw_struct_by_variants(
     });
     let enum_derives = gen_enum_derives();
     let enum_ident = quote::format_ident!("{}", &variant_names_common_prefix,);
+    let is_generic_bitlen_struct = are_variants_of_generic_bitlen_struct(&variants);
+    let deserialize_impl = if is_generic_bitlen_struct {
+        let self_32 = quote::format_ident!("{}32", enum_ident);
+        let self_64 = quote::format_ident!("{}64", enum_ident);
+        quote! {
+            #[automatically_derived]
+            impl<'a> VariantStructBinaryDeserialize<'a> for #enum_ident {
+                fn deserialize(
+                    deserializer: &mut ::binary_serde::BinaryDeserializerFromBufSafe<'a>,
+                    parser: &ElfParser<'a>,
+                ) -> ::core::result::Result<Self, ::binary_serde::BinarySerdeBufSafeError> {
+                    match parser.file_info().bit_length {
+                        ArchBitLength::Arch32Bit => Ok(Self::#self_32(deserializer.deserialize()?)),
+                        ArchBitLength::Arch64Bit => Ok(Self::#self_64(deserializer.deserialize()?)),
+                    }
+                }
+                fn record_len(file_info: &ElfFileInfo) -> usize {
+                    match file_info.bit_length {
+                        ArchBitLength::Arch32Bit => <#self_32 as BinarySerde>::SERIALIZED_SIZE,
+                        ArchBitLength::Arch64Bit => <#self_64 as BinarySerde>::SERIALIZED_SIZE,
+                    }
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
     let combined_enum = quote! {
         #enum_derives
         pub enum #enum_ident {
@@ -308,6 +371,7 @@ fn gen_raw_struct_by_variants(
         impl #enum_ident {
             #(#field_access_fns)*
         }
+        #deserialize_impl
     };
     let ref_wrapper = gen_ref_wrapper(&enum_ident, &field_names, &field_type_by_name);
     let struct_derives = gen_struct_derives();
@@ -366,7 +430,7 @@ impl FieldAccessMethod {
         match self {
             FieldAccessMethod::Get => {
                 quote! {
-                    pub fn #method_ident(self) -> #field_ty {
+                    pub fn #method_ident(&self) -> #field_ty {
                         #body
                     }
                 }
@@ -403,11 +467,18 @@ struct VariantsFieldTypeInfo {
 impl VariantsFieldTypeInfo {
     pub fn field_access_methods(&self) -> &'static [FieldAccessMethod] {
         if self.are_all_fields_of_the_same_type {
-            &[
-                FieldAccessMethod::GetByRef,
-                FieldAccessMethod::GetMut,
-                FieldAccessMethod::Set,
-            ]
+            match self.field_type {
+                VariantFieldType::Int { .. } => &[
+                    FieldAccessMethod::Get,
+                    FieldAccessMethod::GetMut,
+                    FieldAccessMethod::Set,
+                ],
+                VariantFieldType::Other(_) => &[
+                    FieldAccessMethod::GetByRef,
+                    FieldAccessMethod::GetMut,
+                    FieldAccessMethod::Set,
+                ],
+            }
         } else {
             &[FieldAccessMethod::Get, FieldAccessMethod::Set]
         }
