@@ -4,10 +4,12 @@ use std::marker::PhantomData;
 
 use binary_serde::{BinaryDeserializerFromBufSafe, Endianness};
 use elf_types::{
-    ArchBitLength, ElfFileInfo, ElfHeader, ElfIdent, ProgramHeader, ProgramHeaderRef,
-    SectionHeader, SectionHeaderRef, ELF_MAGIC,
+    ArchBitLength, DebugIgnore, ElfFileInfo, ElfHeader, ElfIdent, ProgramHeader, ProgramHeaderRef,
+    SectionHeader, SectionHeaderRef, SectionHeaderType, ELF_MAGIC,
 };
 use thiserror_no_std::Error;
+
+pub const SHN_UNDEF: u16 = 0;
 
 #[derive(Clone)]
 pub struct ElfParser<'a> {
@@ -108,29 +110,68 @@ impl<'a> ElfParser<'a> {
                 offset_range_of_what,
             })
     }
+
+    pub fn section_names_string_table(&self) -> Result<StringTable<'a>> {
+        let hdr = self.header()?;
+        let section_names_section_index = hdr.section_names_section_index();
+        if section_names_section_index == SHN_UNDEF {
+            return Err(Error::NoSectionNamesStringTable);
+        }
+        self.section_headers()?
+            .get(section_names_section_index as usize)?
+            .as_string_table()?
+            .ok_or(Error::SectionNamesSectionIsNotAStringTable)
+    }
 }
 
 impl<'a> SectionHeaderRef<'a> {
     pub fn content(&self) -> Result<&'a [u8]> {
-        self.parser.0.get_offset_range_content(
+        self.parser.get_offset_range_content(
             self.offset() as usize,
             self.size() as usize,
             "section header",
         )
     }
-}
-struct X;
-impl ::core::ops::Deref for X {
-    type Target;
 
-    fn deref(&self) -> &Self::Target {
-        todo!()
+    pub fn name(&self) -> Result<&str> {
+        self.parser
+            .section_names_string_table()?
+            .string_at_offset(self.name_offset() as usize, "section name")
+    }
+
+    pub fn as_string_table(&self) -> Result<Option<StringTable<'a>>> {
+        if *self.ty() != SectionHeaderType::Strtab {
+            return Ok(None);
+        }
+        Ok(Some(StringTable {
+            content: self.content()?.into(),
+        }))
+    }
+}
+
+#[derive(Clone)]
+pub struct StringTable<'a> {
+    content: DebugIgnore<&'a [u8]>,
+}
+impl<'a> StringTable<'a> {
+    pub fn string_at_offset(&self, offset: usize, offset_of_what: &'static str) -> Result<&'a str> {
+        let slice = self
+            .content
+            .get(offset..)
+            .ok_or(Error::StringOffsetOutOfBoundsOfStrtab {
+                offset,
+                strtab_len: self.content.len(),
+                offset_of_what,
+            })?;
+        let cstr = core::ffi::CStr::from_bytes_until_nul(slice)
+            .map_err(|_| Error::StringTableNotNullTerminated)?;
+        cstr.to_str().map_err(|_| Error::StringTableInvalidUtf8)
     }
 }
 
 impl<'a> ProgramHeaderRef<'a> {
     pub fn content(&self) -> Result<&'a [u8]> {
-        self.parser.0.get_offset_range_content(
+        self.parser.get_offset_range_content(
             self.offset() as usize,
             self.size_in_file() as usize,
             "program header",
@@ -246,13 +287,32 @@ pub enum Error {
     },
 
     #[error(
-        "the file offset range {offset_range:?} of {offset_range_of_what}is out of bounds of file with length {file_len}"
+        "file offset range {offset_range:?} of {offset_range_of_what} is out of bounds of file with length {file_len}"
     )]
     OffsetRangeOutOfBounds {
         offset_range: core::ops::Range<usize>,
         file_len: usize,
         offset_range_of_what: &'static str,
     },
+
+    #[error("string offset {offset} of {offset_of_what} is out of bounds of string table with length {strtab_len}")]
+    StringOffsetOutOfBoundsOfStrtab {
+        offset: usize,
+        strtab_len: usize,
+        offset_of_what: &'static str,
+    },
+
+    #[error("string table is not null terminated")]
+    StringTableNotNullTerminated,
+
+    #[error("string from string table is not valid utf8")]
+    StringTableInvalidUtf8,
+
+    #[error("elf has no section names string table")]
+    NoSectionNamesStringTable,
+
+    #[error("section names section is not a string table")]
+    SectionNamesSectionIsNotAStringTable,
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

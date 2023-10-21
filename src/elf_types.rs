@@ -14,6 +14,23 @@ impl<T> core::fmt::Debug for DebugIgnore<T> {
         write!(f, "...")
     }
 }
+impl<T> From<T> for DebugIgnore<T> {
+    fn from(value: T) -> Self {
+        Self(value)
+    }
+}
+impl<T> core::ops::Deref for DebugIgnore<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<T> core::ops::DerefMut for DebugIgnore<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ElfFileInfo {
@@ -91,7 +108,7 @@ define_raw_struct_generic_bitlen! {
         program_headers_amount: u16,
         section_header_entry_size: u16,
         section_headers_amount: u16,
-        section_header_strings_section_index: u16,
+        section_names_section_index: u16,
     }
 }
 

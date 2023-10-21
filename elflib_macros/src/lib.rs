@@ -199,27 +199,15 @@ fn gen_ref_wrapper(
 ) -> proc_macro2::TokenStream {
     let wrapper_ident = quote::format_ident!("{}Ref", wrapped_type_ident);
     let wrapper_derives = gen_ref_wrapper_derives();
-    let methods = field_names.iter().map(|field_name| {
-        let field_type_info = &field_type_by_name[field_name];
-        let field_ty = field_type_info.field_type.to_syn_type();
-        let field_methods = field_type_info
-            .field_access_methods()
-            .iter()
-            .map(|access_method| match access_method {
-                FieldAccessMethod::Get | FieldAccessMethod::GetByRef => {
-                    let method_ident = access_method.method_ident(field_name);
-                    access_method.build_method(
-                        field_name,
-                        &field_ty,
-                        quote! {self.raw.#method_ident()},
-                    )
-                }
-                _ => quote! {},
-            });
-        quote! {
-            #(#field_methods)*
+    let deref_impl = quote! {
+        impl<'a> ::core::ops::Deref for #wrapper_ident<'a> {
+            type Target = #wrapped_type_ident;
+
+            fn deref(&self) -> &Self::Target {
+                &self.raw
+            }
         }
-    });
+    };
     let deserialize_impl = quote! {
         #[automatically_derived]
         impl<'a> VariantStructBinaryDeserialize<'a> for #wrapper_ident<'a>
@@ -247,12 +235,12 @@ fn gen_ref_wrapper(
         }
 
         impl<'a> #wrapper_ident<'a> {
-            #(#methods)*
             pub fn raw(&self) -> &#wrapped_type_ident {
                 &self.raw
             }
         }
 
+        #deref_impl
         #deserialize_impl
     }
 }
