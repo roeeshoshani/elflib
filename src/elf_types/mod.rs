@@ -5,11 +5,7 @@ pub use codegen::*;
 pub use relocations::*;
 
 use crate::{ElfParser, VariantStructBinaryDeserialize};
-use binary_serde::{
-    binary_serde_bitfield, impl_binary_serde_for_bitflags_ty, BinarySerde, BitfieldBitOrder,
-    Endianness,
-};
-use bitflags::bitflags;
+use binary_serde::{BinarySerde, Endianness};
 use elflib_macros::{define_raw_struct_by_variants, define_raw_struct_generic_bitlen};
 
 pub const ELF_MAGIC: &[u8] = &[0x7f, b'E', b'L', b'F'];
@@ -89,7 +85,7 @@ define_raw_struct_by_variants! {
 }
 
 define_raw_struct_by_variants! {
-    struct SectionHeader32 {
+    struct SectionHeader64 {
         name_offset: u32,
         ty: SectionHeaderType,
         flags: SectionHeaderFlags,
@@ -101,7 +97,7 @@ define_raw_struct_by_variants! {
         address_alignemnt: u64,
         entry_size: u64,
     }
-    struct SectionHeader64 {
+    struct SectionHeader32 {
         name_offset: u32,
         ty: SectionHeaderType,
         flags: SectionHeaderFlagsU32,
@@ -229,7 +225,7 @@ impl SectionHeaderFlagsU32 {
     }
 }
 impl BinarySerde for SectionHeaderFlagsU32 {
-    const SERIALIZED_SIZE: usize = 1;
+    const SERIALIZED_SIZE: usize = <u32 as BinarySerde>::SERIALIZED_SIZE;
 
     type RecursiveArray = <u32 as BinarySerde>::RecursiveArray;
 
@@ -242,7 +238,8 @@ impl BinarySerde for SectionHeaderFlagsU32 {
         buf: &[u8],
         endianness: Endianness,
     ) -> Result<Self, binary_serde::DeserializeError> {
-        let bytes = (buf[0] as u32).binary_serialize_to_array(endianness);
+        let value = u32::binary_deserialize(buf, endianness)?;
+        let bytes = (value as u64).binary_serialize_to_array(endianness);
         Ok(Self(SectionHeaderFlags::binary_deserialize(
             bytes.as_ref(),
             endianness,
