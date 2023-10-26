@@ -112,9 +112,26 @@ pub fn define_raw_struct_by_variants(
                         }
                     }
                 }
-                (VariantFieldType::Other(expected_ty), VariantFieldType::Other(actual_ty))
-                    if expected_ty.to_token_stream().to_string()
-                        == actual_ty.to_token_stream().to_string() => {}
+                (VariantFieldType::Other(expected_ty), VariantFieldType::Other(actual_ty)) => {
+                    let expected_ty_str = expected_ty.to_token_stream().to_string();
+                    let actual_ty_str = actual_ty.to_token_stream().to_string();
+                    if expected_ty_str != actual_ty_str {
+                        if expected_ty_str.starts_with(actual_ty_str.as_str()) {
+                            *expected_ty = actual_ty;
+                            *are_all_fields_the_same = false
+                        } else if actual_ty_str.starts_with(expected_ty_str.as_str()) {
+                            // it's ok, it just the same type but with some prefix
+                            *are_all_fields_the_same = false
+                        } else {
+                            // type mismatch
+                            let error_msg = format!("field {name} has multiple different types");
+                            return quote! {
+                                compile_error!(#error_msg);
+                            }
+                            .into();
+                        }
+                    }
+                }
                 _ => {
                     // type mismatch
                     let error_msg = format!("field {name} has multiple different types");
@@ -296,27 +313,45 @@ fn gen_raw_struct_by_variants(
                 .iter()
                 .map(|field_access_method| {
                     field_access_method.build_method(
-                        field_name,
-                        &ty,
-                        match field_access_method {
-                            FieldAccessMethod::Get => expr_for_each_enum_variant_of_self(
-                                quote! {x.#field_name_ident as #ty},
-                                &variants,
-                            ),
-                            FieldAccessMethod::Set => expr_for_each_enum_variant_of_self(
-                                quote! {x.#field_name_ident = new_value as _},
-                                &variants,
-                            ),
-                            FieldAccessMethod::GetByRef => expr_for_each_enum_variant_of_self(
-                                quote! {&x.#field_name_ident},
-                                &variants,
-                            ),
-                            FieldAccessMethod::GetMut => expr_for_each_enum_variant_of_self(
-                                quote! {&mut x.#field_name_ident},
-                                &variants,
-                            ),
-                        },
-                    )
+                    field_name,
+                    &ty,
+                    match field_access_method {
+                        FieldAccessMethod::Get => {
+                            if type_info.are_all_fields_of_the_same_type {
+                                expr_for_each_enum_variant_of_self(
+                                    quote! {x.#field_name_ident},
+                                    &variants,
+                                )
+                            } else {
+                                expr_for_each_enum_variant_of_self(
+                                    quote! {x.#field_name_ident.try_into().unwrap()},
+                                    &variants,
+                                )
+                            }
+                        }
+                        FieldAccessMethod::Set => {
+                            if type_info.are_all_fields_of_the_same_type {
+                                expr_for_each_enum_variant_of_self(
+                                    quote! {x.#field_name_ident = new_value},
+                                    &variants,
+                                )
+                            } else {
+                                expr_for_each_enum_variant_of_self(
+                                    quote! {x.#field_name_ident = new_value.try_into().unwrap()},
+                                    &variants,
+                                )
+                            }
+                        }
+                        FieldAccessMethod::GetByRef => expr_for_each_enum_variant_of_self(
+                            quote! {&x.#field_name_ident},
+                            &variants,
+                        ),
+                        FieldAccessMethod::GetMut => expr_for_each_enum_variant_of_self(
+                            quote! {&mut x.#field_name_ident},
+                            &variants,
+                        ),
+                    },
+                )
                 });
         quote! {
             #(#field_access_methods)*

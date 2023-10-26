@@ -5,7 +5,8 @@ use std::marker::PhantomData;
 use binary_serde::{BinaryDeserializerFromBufSafe, Endianness};
 use elf_types::{
     ArchBitLength, DebugIgnore, ElfFileInfo, ElfHeader, ElfIdent, ProgramHeader, ProgramHeaderRef,
-    SectionHeader, SectionHeaderRef, SectionHeaderType, ELF_MAGIC,
+    RelocationEntry, RelocationEntryWithAddend, SectionHeader, SectionHeaderRef, SectionHeaderType,
+    ELF_MAGIC,
 };
 use thiserror_no_std::Error;
 
@@ -32,14 +33,24 @@ impl<'a> ElfParser<'a> {
             return Err(Error::ElfMagicIsMissing);
         }
 
-        Ok(Self {
+        let mut parser = Self {
             data: data.into(),
             file_info: ElfFileInfo {
                 endianness: ident.header.endianness.into(),
                 bit_length: ident.header.bit_size,
                 os_abi: ident.header.os_abi,
+
+                // to know the architechture we must first parse the header, but to parse the header we need to have an instance of
+                // a parser. so we use a placeholder here which will be filled later. the architechture shouldn't affect the way
+                // the header is parsed, so it's ok to leave it like this until we parse the header.
+                arch: elf_types::Architechture::None,
             },
-        })
+        };
+
+        // read the real architechture of the elf file
+        parser.file_info.arch = *parser.header()?.arch();
+
+        Ok(parser)
     }
 
     fn deserializer(&self) -> BinaryDeserializerFromBufSafe<'a> {
@@ -64,35 +75,46 @@ impl<'a> ElfParser<'a> {
     fn records_table<T: VariantStructBinaryDeserialize<'a>>(
         &self,
         start_offset: usize,
+        specified_record_len: u64,
         records_amount: usize,
         record_name: &'static str,
-    ) -> ElfRecordsTable<'a, T> {
-        ElfRecordsTable {
+    ) -> Result<ElfRecordsTable<'a, T>> {
+        let record_len = T::record_len(&self.file_info);
+        if specified_record_len != record_len as u64 {
+            return Err(Error::UnexpectedEntrySize {
+                record_name,
+                expected_size: record_len as u64,
+                specified_size: specified_record_len,
+            });
+        }
+        Ok(ElfRecordsTable {
             parser: self.clone(),
             table_start_offset: start_offset,
             table_records_amount: records_amount,
             record_name,
             record_len: T::record_len(&self.file_info),
             phantom: PhantomData,
-        }
+        })
     }
 
     pub fn program_headers(&self) -> Result<ProgramHeaders<'a>> {
         let hdr = self.header()?;
-        Ok(self.records_table(
+        self.records_table(
             hdr.program_headers_off() as usize,
+            hdr.program_header_entry_size() as u64,
             hdr.program_headers_amount() as usize,
             "program header",
-        ))
+        )
     }
 
     pub fn section_headers(&self) -> Result<SectionHeaders<'a>> {
         let hdr = self.header()?;
-        Ok(self.records_table(
+        self.records_table(
             hdr.section_headers_off() as usize,
+            hdr.section_header_entry_size() as u64,
             hdr.section_headers_amount() as usize,
             "section header",
-        ))
+        )
     }
 
     fn get_offset_range_content(
@@ -148,10 +170,33 @@ impl<'a> SectionHeaderRef<'a> {
         }))
     }
 
-    // pub fn as_rela(&self) -> Result<Option> {}
+    pub fn as_rela(&self) -> Result<Option<RelaSection<'a>>> {
+        if *self.ty() != SectionHeaderType::Rela {
+            return Ok(None);
+        }
+        Ok(Some(self.parser.records_table(
+            self.offset() as usize,
+            self.entry_size(),
+            (self.size() / self.entry_size()) as usize,
+            "relocation entry with addend",
+        )?))
+    }
+
+    pub fn as_rel(&self) -> Result<Option<RelSection<'a>>> {
+        if *self.ty() != SectionHeaderType::Rel {
+            return Ok(None);
+        }
+        Ok(Some(self.parser.records_table(
+            self.offset() as usize,
+            self.entry_size(),
+            (self.size() / self.entry_size()) as usize,
+            "relocation entry",
+        )?))
+    }
 }
 
-// pub type RelaSection<'a> = ElfRecordsTable<'a, ElfRel>
+pub type RelaSection<'a> = ElfRecordsTable<'a, RelocationEntryWithAddend>;
+pub type RelSection<'a> = ElfRecordsTable<'a, RelocationEntry>;
 
 #[derive(Clone)]
 pub struct StringTable<'a> {
@@ -322,6 +367,13 @@ pub enum Error {
 
     #[error("section names section is not a string table")]
     SectionNamesSectionIsNotAStringTable,
+
+    #[error("the size of a {record_name} specified in the elf file is {specified_size} but the expected size is {expected_size}")]
+    UnexpectedEntrySize {
+        record_name: &'static str,
+        expected_size: u64,
+        specified_size: u64,
+    },
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
