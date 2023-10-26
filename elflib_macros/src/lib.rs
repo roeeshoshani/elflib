@@ -123,12 +123,27 @@ pub fn define_raw_struct_by_variants(
                             // it's ok, it just the same type but with some prefix
                             *are_all_fields_the_same = false
                         } else {
-                            // type mismatch
-                            let error_msg = format!("field {name} has multiple different types");
-                            return quote! {
-                                compile_error!(#error_msg);
+                            let sorted_types_strings = {
+                                let mut strs =
+                                    [actual_ty_str.to_string(), expected_ty_str.to_string()];
+                                strs.sort();
+                                strs
+                            };
+                            let prefix = strings_find_common_prefix(&sorted_types_strings);
+                            if sorted_types_strings
+                                == [format!("{prefix}32"), format!("{prefix}64")]
+                            {
+                                // all good, it's just 2 different size variants of the same struct
+                                *are_all_fields_the_same = false;
+                            } else {
+                                // type mismatch
+                                let error_msg =
+                                    format!("field {name} has multiple different types");
+                                return quote! {
+                                    compile_error!(#error_msg);
+                                }
+                                .into();
                             }
-                            .into();
                         }
                     }
                 }
@@ -147,36 +162,47 @@ pub fn define_raw_struct_by_variants(
     gen_raw_struct_by_variants(field_names, field_type_by_name, variants).into()
 }
 
-fn variants_find_common_name_prefix(variants: &[syn::ItemStruct]) -> String {
+fn strings_find_common_prefix(strs: &[String]) -> String {
     let mut result = String::new();
-    let variants_names: Vec<String> = variants
-        .iter()
-        .map(|variant| variant.ident.to_string())
-        .collect();
-    let mut variant_names_chars: Vec<std::str::Chars> = variants_names
-        .iter()
-        .map(|variant_name| variant_name.chars())
-        .collect();
+    let mut strs_chars: Vec<std::str::Chars> = strs.iter().map(|str| str.chars()).collect();
     'add_chars_loop: loop {
-        let Some(cur_char_of_first_variant) = variant_names_chars[0].next() else {
+        let Some(cur_char_of_first_str) = strs_chars[0].next() else {
             break 'add_chars_loop;
         };
-        for variant_name_chars in &mut variant_names_chars[1..] {
-            let Some(cur_char) = variant_name_chars.next() else {
+        for str_chars in &mut strs_chars[1..] {
+            let Some(cur_char) = str_chars.next() else {
                 break 'add_chars_loop;
             };
-            if cur_char != cur_char_of_first_variant {
+            if cur_char != cur_char_of_first_str {
                 break 'add_chars_loop;
             }
         }
-        result.push(cur_char_of_first_variant);
+        result.push(cur_char_of_first_str);
     }
     result
 }
 
-fn gen_struct_derives() -> proc_macro2::TokenStream {
-    quote! {
-        #[derive(Debug, BinarySerde, PartialEq, Eq, Clone, Hash)]
+fn variants_find_common_name_prefix(variants: &[syn::ItemStruct]) -> String {
+    let variant_names: Vec<String> = variants
+        .iter()
+        .map(|variant| variant.ident.to_string())
+        .collect();
+    strings_find_common_prefix(&variant_names)
+}
+
+fn gen_variant_struct_derives(variant: &syn::ItemStruct) -> proc_macro2::TokenStream {
+    if variant.attrs.iter().any(|attr| {
+        matches!(attr, syn::Attribute { style: syn::AttrStyle::Outer, meta: syn::Meta::List(syn::MetaList {
+            path, ..
+        }), .. } if path.to_token_stream().to_string() == "binary_serde_bitfield")
+    }) {
+        quote! {
+            #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+        }
+    } else {
+        quote! {
+            #[derive(Debug, BinarySerde, PartialEq, Eq, Clone, Hash)]
+        }
     }
 }
 
@@ -397,11 +423,16 @@ fn gen_raw_struct_by_variants(
         #deserialize_impl
     };
     let ref_wrapper = gen_ref_wrapper(&enum_ident, &field_names, &field_type_by_name);
-    let struct_derives = gen_struct_derives();
+    let variants_with_derives = variants.into_iter().map(|variant| {
+        let derives = gen_variant_struct_derives(&variant);
+        quote! {
+            #derives
+            #variant
+        }
+    });
     quote! {
         #(
-            #struct_derives
-            #variants
+            #variants_with_derives
         )*
         #combined_enum
         #ref_wrapper

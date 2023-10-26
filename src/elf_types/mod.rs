@@ -178,84 +178,54 @@ pub enum ArchBitLength {
     Arch64Bit = 2,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RelocationTypeU8(RelocationType);
-impl RelocationTypeU8 {
-    pub fn new(value: RelocationType) -> Self {
-        // make sure that the relocation type fits in a u8
-        let _ = value as u8;
-        Self(value)
-    }
-    pub fn get(&self) -> RelocationType {
-        self.0
-    }
+macro_rules! gen_enum_size_truncating_wrapper {
+    {$wrapper_name: ident, $inner_ty: ty, $truncated_uint: ty, $original_uint: ty, $convert_inner_to_bits_input_var_name: ident, $convert_inner_to_bits_body: block} => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub struct $wrapper_name($inner_ty);
+        impl BinarySerde for $wrapper_name {
+            const SERIALIZED_SIZE: usize = <$truncated_uint as BinarySerde>::SERIALIZED_SIZE;
+
+            type RecursiveArray = <$truncated_uint as BinarySerde>::RecursiveArray;
+
+            fn binary_serialize(&self, buf: &mut [u8], endianness: Endianness) {
+                let converted = {
+                    let $convert_inner_to_bits_input_var_name = &self.0;
+                    $convert_inner_to_bits_body
+                };
+                converted.binary_serialize(buf, endianness)
+            }
+
+            fn binary_deserialize(
+                buf: &[u8],
+                endianness: Endianness,
+            ) -> Result<Self, binary_serde::DeserializeError> {
+                let value = <$truncated_uint>::binary_deserialize(buf, endianness)?;
+                let bytes = (value as $original_uint).binary_serialize_to_array(endianness);
+                Ok(Self(<$inner_ty>::binary_deserialize(
+                    bytes.as_ref(),
+                    endianness,
+                )?))
+            }
+        }
+        impl TryFrom<$inner_ty> for $wrapper_name {
+            type Error = <$truncated_uint as TryFrom<$original_uint>>::Error;
+
+            fn try_from(value: $inner_ty) -> Result<Self, Self::Error> {
+                let converted = {
+                    let $convert_inner_to_bits_input_var_name = &value;
+                    $convert_inner_to_bits_body
+                };
+                let _ = <$truncated_uint>::try_from(converted)?;
+                Ok(Self(value))
+            }
+        }
+        impl From<$wrapper_name> for $inner_ty {
+            fn from(value: $wrapper_name) -> Self {
+                value.0
+            }
+        }
+    };
 }
-impl BinarySerde for RelocationTypeU8 {
-    const SERIALIZED_SIZE: usize = 1;
 
-    type RecursiveArray = <u8 as BinarySerde>::RecursiveArray;
-
-    fn binary_serialize(&self, buf: &mut [u8], endianness: Endianness) {
-        let value = self.0 as u8;
-        value.binary_serialize(buf, endianness)
-    }
-
-    fn binary_deserialize(
-        buf: &[u8],
-        endianness: Endianness,
-    ) -> Result<Self, binary_serde::DeserializeError> {
-        let bytes = (buf[0] as u32).binary_serialize_to_array(endianness);
-        Ok(Self(RelocationType::binary_deserialize(
-            bytes.as_ref(),
-            endianness,
-        )?))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SectionHeaderFlagsU32(SectionHeaderFlags);
-impl SectionHeaderFlagsU32 {
-    pub fn new(value: SectionHeaderFlags) -> Self {
-        // make sure that the relocation type fits in a u32
-        let _ = value.bits() as u32;
-        Self(value)
-    }
-    pub fn get(&self) -> SectionHeaderFlags {
-        self.0
-    }
-}
-impl BinarySerde for SectionHeaderFlagsU32 {
-    const SERIALIZED_SIZE: usize = <u32 as BinarySerde>::SERIALIZED_SIZE;
-
-    type RecursiveArray = <u32 as BinarySerde>::RecursiveArray;
-
-    fn binary_serialize(&self, buf: &mut [u8], endianness: Endianness) {
-        let value = self.0.bits() as u32;
-        value.binary_serialize(buf, endianness)
-    }
-
-    fn binary_deserialize(
-        buf: &[u8],
-        endianness: Endianness,
-    ) -> Result<Self, binary_serde::DeserializeError> {
-        let value = u32::binary_deserialize(buf, endianness)?;
-        let bytes = (value as u64).binary_serialize_to_array(endianness);
-        Ok(Self(SectionHeaderFlags::binary_deserialize(
-            bytes.as_ref(),
-            endianness,
-        )?))
-    }
-}
-impl TryFrom<SectionHeaderFlags> for SectionHeaderFlagsU32 {
-    type Error = <u32 as TryFrom<u64>>::Error;
-
-    fn try_from(value: SectionHeaderFlags) -> Result<Self, Self::Error> {
-        let _ = u32::try_from(value.bits())?;
-        Ok(Self(value))
-    }
-}
-impl From<SectionHeaderFlagsU32> for SectionHeaderFlags {
-    fn from(value: SectionHeaderFlagsU32) -> Self {
-        value.0
-    }
-}
+gen_enum_size_truncating_wrapper! {RelocationTypeU8, RelocationType, u8, u32, x, {*x as u32}}
+gen_enum_size_truncating_wrapper! {SectionHeaderFlagsU32, SectionHeaderFlags, u32, u64, x, {x.bits()}}
