@@ -5,8 +5,7 @@ use std::marker::PhantomData;
 use binary_serde::{BinaryDeserializerFromBufSafe, Endianness};
 use elf_types::{
     ArchBitLength, DebugIgnore, ElfFileInfo, ElfHeader, ElfIdent, ProgramHeader, ProgramHeaderRef,
-    RelocationEntry, RelocationEntryWithAddend, SectionHeader, SectionHeaderRef, SectionHeaderType,
-    ELF_MAGIC,
+    Rel, Rela, SectionHeader, SectionHeaderRef, SectionHeaderType, ELF_MAGIC,
 };
 use thiserror_no_std::Error;
 
@@ -195,8 +194,8 @@ impl<'a> SectionHeaderRef<'a> {
     }
 }
 
-pub type RelaSection<'a> = ElfRecordsTable<'a, RelocationEntryWithAddend>;
-pub type RelSection<'a> = ElfRecordsTable<'a, RelocationEntry>;
+pub type RelaSection<'a> = ElfRecordsTable<'a, Rela>;
+pub type RelSection<'a> = ElfRecordsTable<'a, Rel>;
 
 #[derive(Clone)]
 pub struct StringTable<'a> {

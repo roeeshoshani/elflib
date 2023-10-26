@@ -8,7 +8,7 @@ use super::{ArchBitLength, Architechture, ElfFileInfo, RelocationType, Relocatio
 define_raw_struct_by_variants! {
     #[binary_serde_bitfield(order = BitfieldBitOrder::LsbFirst)]
     #[derive(Copy)]
-    struct RelocationEntryInfoRegular32 {
+    struct RelInfoRegular32 {
         #[bits(8)]
         ty: RelocationTypeU8,
 
@@ -17,24 +17,24 @@ define_raw_struct_by_variants! {
     }
 
     #[derive(Copy)]
-    struct RelocationEntryInfoRegular64 {
+    struct RelInfoRegular64 {
         ty: RelocationType,
         symbol_index: u32,
     }
 }
 
-impl TryFrom<RelocationEntryInfoRegular64> for RelocationEntryInfoRegular32 {
+impl TryFrom<RelInfoRegular64> for RelInfoRegular32 {
     type Error = <RelocationTypeU8 as TryFrom<RelocationType>>::Error;
 
-    fn try_from(value: RelocationEntryInfoRegular64) -> Result<Self, Self::Error> {
+    fn try_from(value: RelInfoRegular64) -> Result<Self, Self::Error> {
         Ok(Self {
             ty: value.ty.try_into()?,
             symbol_index: value.symbol_index,
         })
     }
 }
-impl From<RelocationEntryInfoRegular32> for RelocationEntryInfoRegular64 {
-    fn from(value: RelocationEntryInfoRegular32) -> Self {
+impl From<RelInfoRegular32> for RelInfoRegular64 {
+    fn from(value: RelInfoRegular32) -> Self {
         Self {
             ty: value.ty.into(),
             symbol_index: value.symbol_index,
@@ -43,29 +43,31 @@ impl From<RelocationEntryInfoRegular32> for RelocationEntryInfoRegular64 {
 }
 
 define_raw_struct_by_variants! {
-    struct RelocationEntryRegular32 {
+    struct RelRegular32 {
         offset: u32,
-        info: RelocationEntryInfoRegular32,
+        info: RelInfoRegular32,
     }
-    struct RelocationEntryRegular64 {
+    struct RelRegular64 {
         offset: u64,
-        info: RelocationEntryInfoRegular64,
+        info: RelInfoRegular64,
     }
 }
 
 define_raw_struct_by_variants! {
-    struct RelocationEntryWithAddendRegular32 {
+    struct RelaRegular32 {
         offset: u32,
-        info: RelocationEntryInfoRegular32,
+        info: RelInfoRegular32,
+        addend: i32,
     }
-    struct RelocationEntryWithAddendRegular64 {
+    struct RelaRegular64 {
         offset: u64,
-        info: RelocationEntryInfoRegular64,
+        info: RelInfoRegular64,
+        addend: i64,
     }
 }
 
 #[derive(Debug, BinarySerde, PartialEq, Eq, Clone, Hash)]
-pub struct RelocationEntryMips64 {
+pub struct RelMips64 {
     pub offset: u64,
     pub symbol_index: u32,
     pub special_symbol: u8,
@@ -75,7 +77,7 @@ pub struct RelocationEntryMips64 {
 }
 
 #[derive(Debug, BinarySerde, PartialEq, Eq, Clone, Hash)]
-pub struct RelocationEntryWithAddendMips64 {
+pub struct RelaMips64 {
     pub offset: u64,
     pub symbol_index: u32,
     pub special_symbol: u8,
@@ -86,61 +88,59 @@ pub struct RelocationEntryWithAddendMips64 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum RelocationEntry {
-    RelocationEntryMips64(RelocationEntryMips64),
-    RelocationEntryRegular(RelocationEntryRegular),
+pub enum Rel {
+    RelMips64(RelMips64),
+    RelRegular(RelRegular),
 }
-impl<'a> VariantStructBinaryDeserialize<'a> for RelocationEntry {
+impl<'a> VariantStructBinaryDeserialize<'a> for Rel {
     fn deserialize(
         deserializer: &mut binary_serde::BinaryDeserializerFromBufSafe<'a>,
         parser: &ElfParser<'a>,
     ) -> core::result::Result<Self, binary_serde::BinarySerdeBufSafeError> {
         match (parser.file_info.arch, parser.file_info.bit_length) {
             (Architechture::Mips, ArchBitLength::Arch64Bit) => {
-                Ok(Self::RelocationEntryMips64(deserializer.deserialize()?))
+                Ok(Self::RelMips64(deserializer.deserialize()?))
             }
-            _ => Ok(Self::RelocationEntryRegular(
-                RelocationEntryRegular::deserialize(deserializer, parser)?,
-            )),
+            _ => Ok(Self::RelRegular(RelRegular::deserialize(
+                deserializer,
+                parser,
+            )?)),
         }
     }
 
     fn record_len(file_info: &ElfFileInfo) -> usize {
         match (file_info.arch, file_info.bit_length) {
-            (Architechture::Mips, ArchBitLength::Arch64Bit) => {
-                RelocationEntryMips64::SERIALIZED_SIZE
-            }
-            _ => RelocationEntryRegular::record_len(file_info),
+            (Architechture::Mips, ArchBitLength::Arch64Bit) => RelMips64::SERIALIZED_SIZE,
+            _ => RelRegular::record_len(file_info),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum RelocationEntryWithAddend {
-    RelocationEntryWithAddendMips64(RelocationEntryWithAddendMips64),
-    RelocationEntryWithAddendRegular(RelocationEntryWithAddendRegular),
+pub enum Rela {
+    RelaMips64(RelaMips64),
+    RelaRegular(RelaRegular),
 }
-impl<'a> VariantStructBinaryDeserialize<'a> for RelocationEntryWithAddend {
+impl<'a> VariantStructBinaryDeserialize<'a> for Rela {
     fn deserialize(
         deserializer: &mut binary_serde::BinaryDeserializerFromBufSafe<'a>,
         parser: &ElfParser<'a>,
     ) -> core::result::Result<Self, binary_serde::BinarySerdeBufSafeError> {
         match (parser.file_info.arch, parser.file_info.bit_length) {
-            (Architechture::Mips, ArchBitLength::Arch64Bit) => Ok(
-                Self::RelocationEntryWithAddendMips64(deserializer.deserialize()?),
-            ),
-            _ => Ok(Self::RelocationEntryWithAddendRegular(
-                RelocationEntryWithAddendRegular::deserialize(deserializer, parser)?,
-            )),
+            (Architechture::Mips, ArchBitLength::Arch64Bit) => {
+                Ok(Self::RelaMips64(deserializer.deserialize()?))
+            }
+            _ => Ok(Self::RelaRegular(RelaRegular::deserialize(
+                deserializer,
+                parser,
+            )?)),
         }
     }
 
     fn record_len(file_info: &ElfFileInfo) -> usize {
         match (file_info.arch, file_info.bit_length) {
-            (Architechture::Mips, ArchBitLength::Arch64Bit) => {
-                RelocationEntryWithAddendMips64::SERIALIZED_SIZE
-            }
-            _ => RelocationEntryWithAddendRegular::record_len(file_info),
+            (Architechture::Mips, ArchBitLength::Arch64Bit) => RelaMips64::SERIALIZED_SIZE,
+            _ => RelaRegular::record_len(file_info),
         }
     }
 }
@@ -156,4 +156,92 @@ pub enum RelocationSpecialSymbolMips64 {
     GP0 = 2,
     /// address of location being relocated
     Loc = 3,
+}
+
+macro_rules! gen_generic_rel_ty {
+    {$rel_postfix: ident, $addend_ty: ty, $convert_rela_to_rel_input_var_name: ident, $convert_rela_to_rel_block: block} => {
+        paste::paste!{
+            #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+            pub enum [<GenericRel $rel_postfix>] {
+                [<Rel $rel_postfix>]([<Rel $rel_postfix>]),
+                [<Rela $rel_postfix>]([<Rela $rel_postfix>]),
+            }
+            impl [<GenericRel $rel_postfix>] {
+                pub fn as_rel_with_opt_addend(self) -> [<RelOptAddend $rel_postfix>] {
+                    match self {
+                        Self::[<Rel $rel_postfix>](x) => [<RelOptAddend $rel_postfix>] {
+                            rel: x,
+                            addend: None,
+                        },
+                        Self::[<Rela $rel_postfix>](x) => [<RelOptAddend $rel_postfix>] {
+                            rel: {
+                                let $convert_rela_to_rel_input_var_name = &x;
+                                $convert_rela_to_rel_block
+                            },
+                            addend: Some(x.addend),
+                        },
+                    }
+                }
+            }
+            #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+            pub struct [<RelOptAddend $rel_postfix>] {
+                pub rel: [<Rel $rel_postfix>],
+                pub addend: Option<$addend_ty>,
+            }
+        }
+    };
+}
+
+gen_generic_rel_ty! {Regular32, i32, x, {
+    RelRegular32 {
+        offset: x.offset,
+        info: x.info,
+    }
+}}
+gen_generic_rel_ty! {Regular64, i64, x, {
+    RelRegular64 {
+        offset: x.offset,
+        info: x.info,
+    }
+}}
+gen_generic_rel_ty! {Mips64, i64, x, {
+    RelMips64 {
+        offset: x.offset,
+        symbol_index: x.symbol_index,
+        special_symbol: x.special_symbol,
+        ty3: x.ty3,
+        ty2: x.ty2,
+        ty: x.ty,
+    }
+}}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum GenericRelRegular {
+    GenericRelRegular32(GenericRelRegular32),
+    GenericRelRegular64(GenericRelRegular64),
+}
+impl GenericRelRegular {
+    pub fn as_rel_with_opt_addend(self) -> RelOptAddendRegular {
+        match self {
+            GenericRelRegular::GenericRelRegular32(x) => {
+                let rel_with_opt_addend = x.as_rel_with_opt_addend();
+                RelOptAddendRegular {
+                    rel: RelRegular::RelRegular32(rel_with_opt_addend.rel),
+                    addend: rel_with_opt_addend.addend.map(|x| x as i64),
+                }
+            }
+            GenericRelRegular::GenericRelRegular64(x) => {
+                let rel_with_opt_addend = x.as_rel_with_opt_addend();
+                RelOptAddendRegular {
+                    rel: RelRegular::RelRegular64(rel_with_opt_addend.rel),
+                    addend: rel_with_opt_addend.addend,
+                }
+            }
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RelOptAddendRegular {
+    pub rel: RelRegular,
+    pub addend: Option<i64>,
 }
