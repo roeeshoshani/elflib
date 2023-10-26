@@ -8,7 +8,6 @@ from collections import defaultdict
 @dataclasses.dataclass
 class Entry:
     variant_name: str
-    const_variant_name: str
     comment: str
 
 @dataclasses.dataclass
@@ -39,6 +38,7 @@ def extract_constants(prefix: str, bitflags: bool):
         lines += f.readlines()
     entries_of_value_str = defaultdict(list)
     all_names = set()
+    all_raw_names = set()
 
     unfixed_lines = lines
     lines = []
@@ -52,6 +52,13 @@ def extract_constants(prefix: str, bitflags: bool):
                 break
             cur = m.groups()[0]
             cur += unfixed_lines[i]
+            i += 1
+        while i < len(unfixed_lines):
+            m = re.match('^\s*//(.*)', cur)
+            if m == None:
+                break
+            comment = m.groups()[0]
+            cur = unfixed_lines[i] + f' /* {comment} */'
             i += 1
         lines.append(cur)
 
@@ -82,6 +89,10 @@ def extract_constants(prefix: str, bitflags: bool):
         if comment != None:
             comment = comment.strip()
 
+        if variant_name in all_raw_names:
+            continue
+        all_raw_names.add(variant_name)
+
         if variant_name[0].isdigit():
             if variant_name.lower().startswith('68k'):
                 variant_name = f'm{variant_name}'
@@ -98,7 +109,6 @@ def extract_constants(prefix: str, bitflags: bool):
             else:
                 raise Exception(f'variant name {repr(variant_name)} starts with a digit and has no comment')
 
-        const_variant_name = make_variant_name(variant_name, True).upper()
         variant_name = make_variant_name(variant_name, bitflags)
 
         already_have = False
@@ -108,7 +118,7 @@ def extract_constants(prefix: str, bitflags: bool):
                 break
         if not already_have and variant_name not in all_names:
             all_names.add(variant_name)
-            entries_of_value_str[value_str].append(Entry(variant_name, const_variant_name, comment))
+            entries_of_value_str[value_str].append(Entry(variant_name, comment))
 
     entries_of_value = defaultdict(list)
     for initial_value_str, entries in entries_of_value_str.items():
@@ -170,7 +180,7 @@ def extract_constants(prefix: str, bitflags: bool):
 
         value = eval(value_str)
         for entry in entries:
-            entries_of_value[value].append(Entry(entry.variant_name, entry.const_variant_name, entry.comment))
+            entries_of_value[value].append(Entry(entry.variant_name, entry.comment))
 
     res = ''
     enum_consts = {}
@@ -195,7 +205,7 @@ def extract_constants(prefix: str, bitflags: bool):
                     comment = ' Or '.join(comment_contents)
                     res += f'/// {comment}\n'
                 for entry in entries:
-                    const_name = entry.const_variant_name
+                    const_name = entry.variant_name
                     if const_name in enum_consts:
                         if enum_consts[const_name].value != value:
                             raise Exception(f'multiple values for const name {const_name}: {[value, enum_consts[const_name].value]}')
@@ -215,6 +225,7 @@ def extract_constants(prefix: str, bitflags: bool):
             if comment != None:
                 res += f'/// {comment}\n'
             variant_name = enum_variant_name_of_value[entry.value]
+            res += f'#[allow(non_upper_case_globals)]\n'
             res += f'pub const {const_name} : Self = Self::{variant_name};\n'
     res += '}\n'
 
