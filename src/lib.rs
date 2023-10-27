@@ -170,7 +170,7 @@ impl<'a> SectionHeaderRef<'a> {
             SectionHeaderType::Strtab => Ok(SectionData::StringTable(StringTable {
                 content: self.content()?.into(),
             })),
-            SectionHeaderType::Rela => Ok(SectionData::GenericRel(GenericRelSection::RelaSection(
+            SectionHeaderType::Rela => Ok(SectionData::GenericRel(GenericRelEntries::RelaEntries(
                 self.parser.records_table(
                     self.offset() as usize,
                     self.entry_size(),
@@ -178,7 +178,7 @@ impl<'a> SectionHeaderRef<'a> {
                     "relocation entry with addend",
                 )?,
             ))),
-            SectionHeaderType::Rel => Ok(SectionData::GenericRel(GenericRelSection::RelSection(
+            SectionHeaderType::Rel => Ok(SectionData::GenericRel(GenericRelEntries::RelEntries(
                 self.parser.records_table(
                     self.offset() as usize,
                     self.entry_size(),
@@ -194,43 +194,43 @@ impl<'a> SectionHeaderRef<'a> {
 #[derive(Debug, Clone)]
 pub enum SectionData<'a> {
     StringTable(StringTable<'a>),
-    GenericRel(GenericRelSection<'a>),
+    GenericRel(GenericRelEntries<'a>),
     UnknownSectionType,
 }
 
 #[derive(Debug, Clone)]
-pub enum GenericRelSection<'a> {
-    RelSection(RelSection<'a>),
-    RelaSection(RelaSection<'a>),
+pub enum GenericRelEntries<'a> {
+    RelEntries(RelEntries<'a>),
+    RelaEntries(RelaEntries<'a>),
 }
-impl<'a> GenericRelSection<'a> {
+impl<'a> GenericRelEntries<'a> {
     pub fn get(&self, index: usize) -> Result<GenericRel> {
         match self {
-            GenericRelSection::RelSection(x) => Ok(x.get(index)?.into()),
-            GenericRelSection::RelaSection(x) => Ok(x.get(index)?.into()),
+            GenericRelEntries::RelEntries(x) => Ok(x.get(index)?.into()),
+            GenericRelEntries::RelaEntries(x) => Ok(x.get(index)?.into()),
         }
     }
 
-    pub fn iter(&self) -> GenericRelSectionIter<'a> {
+    pub fn iter(&self) -> GenericRelEntriesIter<'a> {
         match self {
-            GenericRelSection::RelSection(x) => GenericRelSectionIter::RelSectionIter(x.iter()),
-            GenericRelSection::RelaSection(x) => GenericRelSectionIter::RelaSectionIter(x.iter()),
+            GenericRelEntries::RelEntries(x) => GenericRelEntriesIter::RelEntriesIter(x.iter()),
+            GenericRelEntries::RelaEntries(x) => GenericRelEntriesIter::RelaEntriesIter(x.iter()),
         }
     }
 }
-impl<'a> IntoIterator for GenericRelSection<'a> {
+impl<'a> IntoIterator for GenericRelEntries<'a> {
     type Item = Result<GenericRel>;
 
-    type IntoIter = GenericRelSectionIter<'a>;
+    type IntoIter = GenericRelEntriesIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
-impl<'a, 'r> IntoIterator for &'r GenericRelSection<'a> {
+impl<'a, 'r> IntoIterator for &'r GenericRelEntries<'a> {
     type Item = Result<GenericRel>;
 
-    type IntoIter = GenericRelSectionIter<'a>;
+    type IntoIter = GenericRelEntriesIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -238,26 +238,26 @@ impl<'a, 'r> IntoIterator for &'r GenericRelSection<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum GenericRelSectionIter<'a> {
-    RelSectionIter(RelSectionIter<'a>),
-    RelaSectionIter(RelaSectionIter<'a>),
+pub enum GenericRelEntriesIter<'a> {
+    RelEntriesIter(RelEntriesIter<'a>),
+    RelaEntriesIter(RelaEntriesIter<'a>),
 }
-impl<'a> Iterator for GenericRelSectionIter<'a> {
+impl<'a> Iterator for GenericRelEntriesIter<'a> {
     type Item = Result<GenericRel>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            GenericRelSectionIter::RelSectionIter(x) => Some(x.next()?.map(|rel| rel.into())),
-            GenericRelSectionIter::RelaSectionIter(x) => Some(x.next()?.map(|rel| rel.into())),
+            GenericRelEntriesIter::RelEntriesIter(x) => Some(x.next()?.map(|rel| rel.into())),
+            GenericRelEntriesIter::RelaEntriesIter(x) => Some(x.next()?.map(|rel| rel.into())),
         }
     }
 }
 
-pub type RelaSection<'a> = ElfRecordsTable<'a, Rela>;
-pub type RelaSectionIter<'a> = ElfRecordsTableIter<'a, Rela>;
+pub type RelaEntries<'a> = ElfRecordsTable<'a, Rela>;
+pub type RelaEntriesIter<'a> = ElfRecordsTableIter<'a, Rela>;
 
-pub type RelSection<'a> = ElfRecordsTable<'a, Rel>;
-pub type RelSectionIter<'a> = ElfRecordsTableIter<'a, Rel>;
+pub type RelEntries<'a> = ElfRecordsTable<'a, Rel>;
+pub type RelEntriesIter<'a> = ElfRecordsTableIter<'a, Rel>;
 
 #[derive(Debug, Clone)]
 pub struct StringTable<'a> {
