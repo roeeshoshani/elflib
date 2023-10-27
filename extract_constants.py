@@ -26,12 +26,13 @@ def make_variant_name(c_define_name: str, bitflags: bool) -> str:
 
 def extract_constants(prefix: str, bitflags: bool):
     lines = []
-    for rel_path in os.listdir('/home/sho/Documents/binutils-gdb/include/elf'):
-        fullpath = '/home/sho/Documents/binutils-gdb/include/elf/' + rel_path
+    home = os.environ['HOME']
+    for rel_path in os.listdir(f'{home}/Documents/binutils-gdb/include/elf'):
+        fullpath = f'{home}/Documents/binutils-gdb/include/elf/' + rel_path
         with open(fullpath,'r') as f:
             lines += f.readlines()
-    for rel_path in os.listdir('/home/sho/Documents/binutils-gdb/elfcpp'):
-        fullpath = '/home/sho/Documents/binutils-gdb/elfcpp/' + rel_path
+    for rel_path in os.listdir(f'{home}/Documents/binutils-gdb/elfcpp'):
+        fullpath = f'{home}/Documents/binutils-gdb/elfcpp/' + rel_path
         with open(fullpath,'r') as f:
             lines += f.readlines()
     with open('/usr/include/elf.h', 'r') as f:
