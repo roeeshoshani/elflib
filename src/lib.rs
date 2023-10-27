@@ -41,8 +41,8 @@ impl<'a> ElfParser<'a> {
                 os_abi: ident.header.os_abi,
 
                 // to know the architechture we must first parse the header, but to parse the header we need to have an instance of
-                // a parser. so we use a placeholder here which will be filled later. the architechture shouldn't affect the way
-                // the header is parsed, so it's ok to leave it like this until we parse the header.
+                // a parser, so we use a placeholder here which will be filled later. the architechture shouldn't affect the way
+                // the header is parsed, so it's ok to parse the header while the parser uses a placeholder architechture value.
                 arch: elf_types::Architechture::None,
             },
         };
