@@ -66,6 +66,69 @@ define_raw_struct_by_variants! {
     }
 }
 
+impl RelaRegular32 {
+    pub fn to_rel_and_addend(self) -> (RelRegular32, i32) {
+        (
+            RelRegular32 {
+                offset: self.offset,
+                info: self.info,
+            },
+            self.addend,
+        )
+    }
+    pub fn from_rel_and_addend(rel: RelRegular32, addend: i32) -> Self {
+        Self {
+            offset: rel.offset,
+            info: rel.info,
+            addend,
+        }
+    }
+}
+
+impl RelaRegular64 {
+    pub fn to_rel_and_addend(self) -> (RelRegular64, i64) {
+        (
+            RelRegular64 {
+                offset: self.offset,
+                info: self.info,
+            },
+            self.addend,
+        )
+    }
+    pub fn from_rel_and_addend(rel: RelRegular64, addend: i64) -> Self {
+        Self {
+            offset: rel.offset,
+            info: rel.info,
+            addend,
+        }
+    }
+}
+
+impl RelaRegular {
+    pub fn to_rel_and_addend(self) -> (RelRegular, i64) {
+        match self {
+            RelaRegular::RelaRegular32(x) => {
+                let (rel, addend) = x.to_rel_and_addend();
+                (RelRegular::RelRegular32(rel), addend as i64)
+            }
+            RelaRegular::RelaRegular64(x) => {
+                let (rel, addend) = x.to_rel_and_addend();
+                (RelRegular::RelRegular64(rel), addend)
+            }
+        }
+    }
+    pub fn from_rel_and_addend(rel: RelRegular, addend: i64) -> Self {
+        match rel {
+            RelRegular::RelRegular32(x) => {
+                Self::RelaRegular32(RelaRegular32::from_rel_and_addend(x, addend as i32))
+            }
+            RelRegular::RelRegular64(x) => {
+                Self::RelaRegular64(RelaRegular64::from_rel_and_addend(x, addend))
+            }
+        }
+    }
+}
+
 #[derive(Debug, BinarySerde, PartialEq, Eq, Clone, Hash)]
 pub struct RelMips64 {
     pub offset: u64,
@@ -85,6 +148,32 @@ pub struct RelaMips64 {
     pub ty2: RelocationTypeU8,
     pub ty: RelocationTypeU8,
     pub addend: i64,
+}
+impl RelaMips64 {
+    pub fn to_rel_and_addend(self) -> (RelMips64, i64) {
+        (
+            RelMips64 {
+                offset: self.offset,
+                symbol_index: self.symbol_index,
+                special_symbol: self.special_symbol,
+                ty3: self.ty3,
+                ty2: self.ty2,
+                ty: self.ty,
+            },
+            self.addend,
+        )
+    }
+    pub fn from_rel_and_addend(rel: RelMips64, addend: i64) -> Self {
+        Self {
+            offset: rel.offset,
+            symbol_index: rel.symbol_index,
+            special_symbol: rel.special_symbol,
+            ty3: rel.ty3,
+            ty2: rel.ty2,
+            ty: rel.ty,
+            addend,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -115,11 +204,56 @@ impl<'a> VariantStructBinaryDeserialize<'a> for Rel {
         }
     }
 }
+impl Rel {
+    pub fn to_generic_rel(self) -> GenericRel {
+        GenericRel {
+            rel: self,
+            addend: None,
+        }
+    }
+}
+impl From<Rel> for GenericRel {
+    fn from(value: Rel) -> Self {
+        value.to_generic_rel()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Rela {
     RelaMips64(RelaMips64),
     RelaRegular(RelaRegular),
+}
+impl Rela {
+    pub fn to_rel_and_addend(self) -> (Rel, i64) {
+        match self {
+            Rela::RelaMips64(rela_mips64) => {
+                let (rel, addend) = rela_mips64.to_rel_and_addend();
+                (Rel::RelMips64(rel), addend)
+            }
+            Rela::RelaRegular(rela_regular) => {
+                let (rel, addend) = rela_regular.to_rel_and_addend();
+                (Rel::RelRegular(rel), addend)
+            }
+        }
+    }
+    pub fn from_rel_and_addend(rel: Rel, addend: i64) -> Self {
+        match rel {
+            Rel::RelMips64(x) => Self::RelaMips64(RelaMips64::from_rel_and_addend(x, addend)),
+            Rel::RelRegular(x) => Self::RelaRegular(RelaRegular::from_rel_and_addend(x, addend)),
+        }
+    }
+    pub fn to_generic_rel(self) -> GenericRel {
+        let (rel, addend) = self.to_rel_and_addend();
+        GenericRel {
+            rel,
+            addend: Some(addend),
+        }
+    }
+}
+impl From<Rela> for GenericRel {
+    fn from(value: Rela) -> Self {
+        value.to_generic_rel()
+    }
 }
 impl<'a> VariantStructBinaryDeserialize<'a> for Rela {
     fn deserialize(
@@ -158,90 +292,34 @@ pub enum RelocationSpecialSymbolMips64 {
     Loc = 3,
 }
 
-macro_rules! gen_generic_rel_ty {
-    {$rel_postfix: ident, $addend_ty: ty, $convert_rela_to_rel_input_var_name: ident, $convert_rela_to_rel_block: block} => {
-        paste::paste!{
-            #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-            pub enum [<GenericRel $rel_postfix>] {
-                [<Rel $rel_postfix>]([<Rel $rel_postfix>]),
-                [<Rela $rel_postfix>]([<Rela $rel_postfix>]),
-            }
-            impl [<GenericRel $rel_postfix>] {
-                pub fn as_rel_with_opt_addend(self) -> [<RelOptAddend $rel_postfix>] {
-                    match self {
-                        Self::[<Rel $rel_postfix>](x) => [<RelOptAddend $rel_postfix>] {
-                            rel: x,
-                            addend: None,
-                        },
-                        Self::[<Rela $rel_postfix>](x) => [<RelOptAddend $rel_postfix>] {
-                            rel: {
-                                let $convert_rela_to_rel_input_var_name = &x;
-                                $convert_rela_to_rel_block
-                            },
-                            addend: Some(x.addend),
-                        },
-                    }
-                }
-            }
-            #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-            pub struct [<RelOptAddend $rel_postfix>] {
-                pub rel: [<Rel $rel_postfix>],
-                pub addend: Option<$addend_ty>,
-            }
-        }
-    };
-}
-
-gen_generic_rel_ty! {Regular32, i32, x, {
-    RelRegular32 {
-        offset: x.offset,
-        info: x.info,
-    }
-}}
-gen_generic_rel_ty! {Regular64, i64, x, {
-    RelRegular64 {
-        offset: x.offset,
-        info: x.info,
-    }
-}}
-gen_generic_rel_ty! {Mips64, i64, x, {
-    RelMips64 {
-        offset: x.offset,
-        symbol_index: x.symbol_index,
-        special_symbol: x.special_symbol,
-        ty3: x.ty3,
-        ty2: x.ty2,
-        ty: x.ty,
-    }
-}}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum GenericRelRegular {
-    GenericRelRegular32(GenericRelRegular32),
-    GenericRelRegular64(GenericRelRegular64),
-}
-impl GenericRelRegular {
-    pub fn as_rel_with_opt_addend(self) -> RelOptAddendRegular {
-        match self {
-            GenericRelRegular::GenericRelRegular32(x) => {
-                let rel_with_opt_addend = x.as_rel_with_opt_addend();
-                RelOptAddendRegular {
-                    rel: RelRegular::RelRegular32(rel_with_opt_addend.rel),
-                    addend: rel_with_opt_addend.addend.map(|x| x as i64),
-                }
-            }
-            GenericRelRegular::GenericRelRegular64(x) => {
-                let rel_with_opt_addend = x.as_rel_with_opt_addend();
-                RelOptAddendRegular {
-                    rel: RelRegular::RelRegular64(rel_with_opt_addend.rel),
-                    addend: rel_with_opt_addend.addend,
-                }
-            }
-        }
-    }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RelOptAddendRegular {
-    pub rel: RelRegular,
+pub struct GenericRel {
+    pub rel: Rel,
     pub addend: Option<i64>,
+}
+impl GenericRel {
+    pub fn as_rel(self) -> Option<Rel> {
+        if self.addend.is_none() {
+            Some(self.rel)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_rela(self) -> Option<Rela> {
+        Some(Rela::from_rel_and_addend(self.rel, self.addend?))
+    }
+
+    pub fn as_rel_or_rela(self) -> RelOrRela {
+        match self.addend {
+            Some(addend) => RelOrRela::Rela(Rela::from_rel_and_addend(self.rel, addend)),
+            None => RelOrRela::Rel(self.rel),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RelOrRela {
+    Rel(Rel),
+    Rela(Rela),
 }

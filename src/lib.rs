@@ -4,8 +4,9 @@ use std::marker::PhantomData;
 
 use binary_serde::{BinaryDeserializerFromBufSafe, Endianness};
 use elf_types::{
-    ArchBitLength, DebugIgnore, ElfFileInfo, ElfHeader, ElfIdent, ProgramHeader, ProgramHeaderRef,
-    Rel, Rela, SectionHeader, SectionHeaderRef, SectionHeaderType, ELF_MAGIC,
+    ArchBitLength, DebugIgnore, ElfFileInfo, ElfHeader, ElfIdent, GenericRel, ProgramHeader,
+    ProgramHeaderRef, Rel, RelMips64, Rela, SectionHeader, SectionHeaderRef, SectionHeaderType,
+    ELF_MAGIC,
 };
 use thiserror_no_std::Error;
 
@@ -138,10 +139,14 @@ impl<'a> ElfParser<'a> {
         if section_names_section_index == SHN_UNDEF {
             return Err(Error::NoSectionNamesStringTable);
         }
-        self.section_headers()?
+        match self
+            .section_headers()?
             .get(section_names_section_index as usize)?
-            .as_strtab()?
-            .ok_or(Error::SectionNamesSectionIsNotAStringTable)
+            .data()?
+        {
+            SectionData::StringTable(string_table) => Ok(string_table),
+            _ => Err(Error::SectionNamesSectionIsNotAStringTable),
+        }
     }
 }
 
@@ -160,44 +165,101 @@ impl<'a> SectionHeaderRef<'a> {
             .string_at_offset(self.name_offset() as usize, "section name")
     }
 
-    pub fn as_strtab(&self) -> Result<Option<StringTable<'a>>> {
-        if *self.ty() != SectionHeaderType::Strtab {
-            return Ok(None);
+    pub fn data(&self) -> Result<SectionData<'a>> {
+        match self.ty() {
+            SectionHeaderType::Strtab => Ok(SectionData::StringTable(StringTable {
+                content: self.content()?.into(),
+            })),
+            SectionHeaderType::Rela => Ok(SectionData::GenericRel(GenericRelSection::RelaSection(
+                self.parser.records_table(
+                    self.offset() as usize,
+                    self.entry_size(),
+                    (self.size() / self.entry_size()) as usize,
+                    "relocation entry with addend",
+                )?,
+            ))),
+            SectionHeaderType::Rel => Ok(SectionData::GenericRel(GenericRelSection::RelSection(
+                self.parser.records_table(
+                    self.offset() as usize,
+                    self.entry_size(),
+                    (self.size() / self.entry_size()) as usize,
+                    "relocation entry",
+                )?,
+            ))),
+            _ => Ok(SectionData::UnknownSectionType),
         }
-        Ok(Some(StringTable {
-            content: self.content()?.into(),
-        }))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SectionData<'a> {
+    StringTable(StringTable<'a>),
+    GenericRel(GenericRelSection<'a>),
+    UnknownSectionType,
+}
+
+#[derive(Debug, Clone)]
+pub enum GenericRelSection<'a> {
+    RelSection(RelSection<'a>),
+    RelaSection(RelaSection<'a>),
+}
+impl<'a> GenericRelSection<'a> {
+    pub fn get(&self, index: usize) -> Result<GenericRel> {
+        match self {
+            GenericRelSection::RelSection(x) => Ok(x.get(index)?.into()),
+            GenericRelSection::RelaSection(x) => Ok(x.get(index)?.into()),
+        }
     }
 
-    pub fn as_rela(&self) -> Result<Option<RelaSection<'a>>> {
-        if *self.ty() != SectionHeaderType::Rela {
-            return Ok(None);
+    pub fn iter(&self) -> GenericRelSectionIter<'a> {
+        match self {
+            GenericRelSection::RelSection(x) => GenericRelSectionIter::RelSectionIter(x.iter()),
+            GenericRelSection::RelaSection(x) => GenericRelSectionIter::RelaSectionIter(x.iter()),
         }
-        Ok(Some(self.parser.records_table(
-            self.offset() as usize,
-            self.entry_size(),
-            (self.size() / self.entry_size()) as usize,
-            "relocation entry with addend",
-        )?))
     }
+}
+impl<'a> IntoIterator for GenericRelSection<'a> {
+    type Item = Result<GenericRel>;
 
-    pub fn as_rel(&self) -> Result<Option<RelSection<'a>>> {
-        if *self.ty() != SectionHeaderType::Rel {
-            return Ok(None);
+    type IntoIter = GenericRelSectionIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+impl<'a, 'r> IntoIterator for &'r GenericRelSection<'a> {
+    type Item = Result<GenericRel>;
+
+    type IntoIter = GenericRelSectionIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum GenericRelSectionIter<'a> {
+    RelSectionIter(RelSectionIter<'a>),
+    RelaSectionIter(RelaSectionIter<'a>),
+}
+impl<'a> Iterator for GenericRelSectionIter<'a> {
+    type Item = Result<GenericRel>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            GenericRelSectionIter::RelSectionIter(x) => Some(x.next()?.map(|rel| rel.into())),
+            GenericRelSectionIter::RelaSectionIter(x) => Some(x.next()?.map(|rel| rel.into())),
         }
-        Ok(Some(self.parser.records_table(
-            self.offset() as usize,
-            self.entry_size(),
-            (self.size() / self.entry_size()) as usize,
-            "relocation entry",
-        )?))
     }
 }
 
 pub type RelaSection<'a> = ElfRecordsTable<'a, Rela>;
-pub type RelSection<'a> = ElfRecordsTable<'a, Rel>;
+pub type RelaSectionIter<'a> = ElfRecordsTableIter<'a, Rela>;
 
-#[derive(Clone)]
+pub type RelSection<'a> = ElfRecordsTable<'a, Rel>;
+pub type RelSectionIter<'a> = ElfRecordsTableIter<'a, Rel>;
+
+#[derive(Debug, Clone)]
 pub struct StringTable<'a> {
     content: DebugIgnore<&'a [u8]>,
 }
