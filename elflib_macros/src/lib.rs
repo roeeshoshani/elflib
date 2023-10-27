@@ -1,6 +1,20 @@
 use std::collections::HashMap;
 
-use quote::{quote, quote_spanned, ToTokens};
+use quote::{quote, ToTokens};
+
+#[derive(Clone)]
+struct WithWrapperContext<T: syn::parse::Parse> {
+    inner: T,
+    context_ty: syn::Type,
+}
+impl<T: syn::parse::Parse> syn::parse::Parse for WithWrapperContext<T> {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let inner = input.parse()?;
+        let _: syn::Token![=>] = input.parse()?;
+        let context_ty = input.parse()?;
+        Ok(Self { inner, context_ty })
+    }
+}
 
 struct RawStructVariants {
     variants: Vec<syn::ItemStruct>,
@@ -8,7 +22,7 @@ struct RawStructVariants {
 impl syn::parse::Parse for RawStructVariants {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let mut variants = Vec::new();
-        while !input.is_empty() {
+        while !input.lookahead1().peek(syn::Token![=>]) {
             variants.push(input.parse()?);
         }
         Ok(Self { variants })
@@ -19,7 +33,10 @@ impl syn::parse::Parse for RawStructVariants {
 pub fn define_raw_struct_generic_bitlen(
     item_tokens: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let generic_struct = syn::parse_macro_input!(item_tokens as syn::ItemStruct);
+    let WithWrapperContext {
+        inner: generic_struct,
+        context_ty,
+    } = syn::parse_macro_input!(item_tokens as WithWrapperContext<syn::ItemStruct>);
     let variants = [32_usize, 64_usize].iter().map(|bitlen| {
         let bitlen_uint_type_str = format!("u{}", bitlen);
         let bitlen_uint_type: syn::Type = syn::parse_str(&bitlen_uint_type_str).unwrap();
@@ -36,6 +53,7 @@ pub fn define_raw_struct_generic_bitlen(
     define_raw_struct_by_variants(
         quote! {
             #(#variants)*
+            => #context_ty
         }
         .into(),
     )
@@ -45,7 +63,10 @@ pub fn define_raw_struct_generic_bitlen(
 pub fn define_raw_struct_by_variants(
     item_tokens: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let variants = syn::parse_macro_input!(item_tokens as RawStructVariants).variants;
+    let WithWrapperContext {
+        inner: RawStructVariants { variants },
+        context_ty,
+    } = syn::parse_macro_input!(item_tokens as WithWrapperContext<RawStructVariants>);
     if variants.is_empty() {
         return proc_macro::TokenStream::new();
     }
@@ -159,7 +180,7 @@ pub fn define_raw_struct_by_variants(
         }
     }
 
-    gen_raw_struct_by_variants(field_names, field_type_by_name, variants).into()
+    gen_raw_struct_by_variants(field_names, field_type_by_name, variants, context_ty).into()
 }
 
 fn strings_find_common_prefix(strs: &[String]) -> String {
@@ -237,8 +258,7 @@ fn expr_for_each_enum_variant_of_self(
 
 fn gen_ref_wrapper(
     wrapped_type_ident: &syn::Ident,
-    field_names: &[String],
-    field_type_by_name: &HashMap<String, VariantsFieldTypeInfo>,
+    context_ty: syn::Type,
 ) -> proc_macro2::TokenStream {
     let wrapper_ident = quote::format_ident!("{}Ref", wrapped_type_ident);
     let wrapper_derives = gen_ref_wrapper_derives();
@@ -254,15 +274,18 @@ fn gen_ref_wrapper(
     let deserialize_impl = quote! {
         #[automatically_derived]
         impl<'a> VariantStructBinaryDeserialize<'a> for #wrapper_ident<'a>
-            where #wrapped_type_ident: VariantStructBinaryDeserialize<'a>
+            where #wrapped_type_ident: VariantStructBinaryDeserialize<'a, Context = ()>
         {
+            type Context = #context_ty;
             fn deserialize(
                 deserializer: &mut ::binary_serde::BinaryDeserializerFromBufSafe<'a>,
                 parser: &ElfParser<'a>,
+                context: #context_ty,
             ) -> ::core::result::Result<Self, ::binary_serde::BinarySerdeBufSafeError> {
                 Ok(Self {
-                    raw: #wrapped_type_ident::deserialize(deserializer, parser)?,
+                    raw: #wrapped_type_ident::deserialize(deserializer, parser, ())?,
                     parser: parser.clone(),
+                    context,
                 })
             }
             fn record_len(file_info: &ElfFileInfo) -> usize {
@@ -275,6 +298,7 @@ fn gen_ref_wrapper(
         pub struct #wrapper_ident<'a> {
             pub(crate) raw: #wrapped_type_ident,
             pub(crate) parser: ElfParser<'a>,
+            pub(crate) context: #context_ty,
         }
 
         impl<'a> #wrapper_ident<'a> {
@@ -306,6 +330,7 @@ fn gen_raw_struct_by_variants(
     field_names: Vec<String>,
     field_type_by_name: HashMap<String, VariantsFieldTypeInfo>,
     mut variants: Vec<syn::ItemStruct>,
+    context_ty: syn::Type,
 ) -> proc_macro2::TokenStream {
     let variant_names_common_prefix = variants_find_common_name_prefix(&variants);
     if variant_names_common_prefix.is_empty() {
@@ -392,9 +417,11 @@ fn gen_raw_struct_by_variants(
         quote! {
             #[automatically_derived]
             impl<'a> VariantStructBinaryDeserialize<'a> for #enum_ident {
+                type Context = ();
                 fn deserialize(
                     deserializer: &mut ::binary_serde::BinaryDeserializerFromBufSafe<'a>,
                     parser: &ElfParser<'a>,
+                    context: (),
                 ) -> ::core::result::Result<Self, ::binary_serde::BinarySerdeBufSafeError> {
                     match parser.file_info().bit_length {
                         ArchBitLength::Arch32Bit => Ok(Self::#self_32(deserializer.deserialize()?)),
@@ -422,7 +449,7 @@ fn gen_raw_struct_by_variants(
         }
         #deserialize_impl
     };
-    let ref_wrapper = gen_ref_wrapper(&enum_ident, &field_names, &field_type_by_name);
+    let ref_wrapper = gen_ref_wrapper(&enum_ident, context_ty);
     let variants_with_derives = variants.into_iter().map(|variant| {
         let derives = gen_variant_struct_derives(&variant);
         quote! {

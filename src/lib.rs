@@ -4,9 +4,8 @@ use std::marker::PhantomData;
 
 use binary_serde::{BinaryDeserializerFromBufSafe, Endianness};
 use elf_types::{
-    ArchBitLength, DebugIgnore, ElfFileInfo, ElfHeader, ElfIdent, GenericRel, ProgramHeader,
-    ProgramHeaderRef, Rel, RelMips64, Rela, SectionHeader, SectionHeaderRef, SectionHeaderType,
-    ELF_MAGIC,
+    DebugIgnore, ElfFileInfo, ElfHeader, ElfIdent, GenericRel, ProgramHeaderRef, Rel, Rela,
+    SectionHeaderRef, SectionHeaderType, SymbolRef, SymbolRefContext, ELF_MAGIC,
 };
 use thiserror_no_std::Error;
 
@@ -69,7 +68,7 @@ impl<'a> ElfParser<'a> {
 
     pub fn header(&self) -> Result<ElfHeader> {
         let mut deserializer = self.deserializer();
-        Ok(ElfHeader::deserialize(&mut deserializer, &self)?)
+        Ok(ElfHeader::deserialize(&mut deserializer, &self, ())?)
     }
 
     fn records_table<T: VariantStructBinaryDeserialize<'a>>(
@@ -78,6 +77,7 @@ impl<'a> ElfParser<'a> {
         specified_record_len: u64,
         records_amount: usize,
         record_name: &'static str,
+        context: T::Context,
     ) -> Result<ElfRecordsTable<'a, T>> {
         let record_len = T::record_len(&self.file_info);
         if specified_record_len != record_len as u64 {
@@ -92,7 +92,8 @@ impl<'a> ElfParser<'a> {
             table_start_offset: start_offset,
             table_records_amount: records_amount,
             record_name,
-            record_len: T::record_len(&self.file_info),
+            record_len,
+            context,
             phantom: PhantomData,
         })
     }
@@ -104,6 +105,7 @@ impl<'a> ElfParser<'a> {
             hdr.program_header_entry_size() as u64,
             hdr.program_headers_amount() as usize,
             "program header",
+            (),
         )
     }
 
@@ -114,6 +116,7 @@ impl<'a> ElfParser<'a> {
             hdr.section_header_entry_size() as u64,
             hdr.section_headers_amount() as usize,
             "section header",
+            (),
         )
     }
 
@@ -159,7 +162,7 @@ impl<'a> SectionHeaderRef<'a> {
         )
     }
 
-    pub fn name(&self) -> Result<&str> {
+    pub fn name(&self) -> Result<&'a str> {
         self.parser
             .section_names_string_table()?
             .string_at_offset(self.name_offset() as usize, "section name")
@@ -170,22 +173,49 @@ impl<'a> SectionHeaderRef<'a> {
             SectionHeaderType::Strtab => Ok(SectionData::StringTable(StringTable {
                 content: self.content()?.into(),
             })),
-            SectionHeaderType::Rela => Ok(SectionData::GenericRel(GenericRelEntries::RelaEntries(
-                self.parser.records_table(
+            SectionHeaderType::Rela => Ok(SectionData::RelocationEntries(
+                GenericRelEntries::RelaEntries(self.parser.records_table(
                     self.offset() as usize,
                     self.entry_size(),
                     (self.size() / self.entry_size()) as usize,
                     "relocation entry with addend",
-                )?,
-            ))),
-            SectionHeaderType::Rel => Ok(SectionData::GenericRel(GenericRelEntries::RelEntries(
-                self.parser.records_table(
+                    (),
+                )?),
+            )),
+            SectionHeaderType::Rel => Ok(SectionData::RelocationEntries(
+                GenericRelEntries::RelEntries(self.parser.records_table(
                     self.offset() as usize,
                     self.entry_size(),
                     (self.size() / self.entry_size()) as usize,
                     "relocation entry",
+                    (),
+                )?),
+            )),
+            SectionHeaderType::Symtab => Ok(SectionData::SymbolTable(
+                self.parser.records_table(
+                    self.offset() as usize,
+                    self.entry_size(),
+                    (self.size() / self.entry_size()) as usize,
+                    "symbol table entry",
+                    SymbolRefContext {
+                        string_table: match self
+                            .parser
+                            .section_headers()?
+                            .get(self.link() as usize)?
+                            .data()?
+                        {
+                            SectionData::StringTable(string_table) => string_table,
+                            _ => {
+                                return Err(
+                                    Error::LinkedSectionOfSymbolTableSectionIsNotAStringTable {
+                                        linked_section_index: self.link() as usize,
+                                    },
+                                )
+                            }
+                        },
+                    },
                 )?,
-            ))),
+            )),
             _ => Ok(SectionData::UnknownSectionType),
         }
     }
@@ -194,8 +224,28 @@ impl<'a> SectionHeaderRef<'a> {
 #[derive(Debug, Clone)]
 pub enum SectionData<'a> {
     StringTable(StringTable<'a>),
-    GenericRel(GenericRelEntries<'a>),
+    SymbolTable(SymbolEntries<'a>),
+    RelocationEntries(GenericRelEntries<'a>),
     UnknownSectionType,
+}
+
+pub type SymbolEntries<'a> = ElfRecordsTable<'a, SymbolRef<'a>>;
+pub type SymbolEntriesIter<'a> = ElfRecordsTableIter<'a, SymbolRef<'a>>;
+
+impl<'a> SymbolRef<'a> {
+    pub fn name(&self) -> Result<&'a str> {
+        match self.info().ty {
+            elf_types::SymbolType::Section => self
+                .parser
+                .section_headers()?
+                .get(self.related_section_index() as usize)?
+                .name(),
+            _ => self
+                .context
+                .string_table
+                .string_at_offset(self.name_index_in_string_table() as usize, "symbol name"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -303,6 +353,7 @@ pub struct ElfRecordsTable<'a, T: VariantStructBinaryDeserialize<'a>> {
     record_name: &'static str,
     record_len: usize,
     phantom: PhantomData<T>,
+    context: T::Context,
 }
 impl<'a, T: VariantStructBinaryDeserialize<'a>> ElfRecordsTable<'a, T> {
     pub fn get(&self, index: usize) -> Result<T> {
@@ -316,7 +367,11 @@ impl<'a, T: VariantStructBinaryDeserialize<'a>> ElfRecordsTable<'a, T> {
         let mut deserializer = self
             .parser
             .deserializer_at_offset(self.table_start_offset + self.record_len * index);
-        Ok(T::deserialize(&mut deserializer, &self.parser)?)
+        Ok(T::deserialize(
+            &mut deserializer,
+            &self.parser,
+            self.context.clone(),
+        )?)
     }
 
     pub fn iter(&self) -> ElfRecordsTableIter<'a, T> {
@@ -328,6 +383,7 @@ impl<'a, T: VariantStructBinaryDeserialize<'a>> ElfRecordsTable<'a, T> {
                 .parser
                 .deserializer_at_offset(self.table_start_offset)
                 .into(),
+            context: self.context.clone(),
             phantom: PhantomData,
         }
     }
@@ -358,6 +414,7 @@ pub struct ElfRecordsTableIter<'a, T: VariantStructBinaryDeserialize<'a>> {
     table_records_amount: usize,
     cur_record_index: usize,
     deserializer: DebugIgnore<BinaryDeserializerFromBufSafe<'a>>,
+    context: T::Context,
     phantom: PhantomData<T>,
 }
 impl<'a, T: VariantStructBinaryDeserialize<'a>> Iterator for ElfRecordsTableIter<'a, T> {
@@ -368,14 +425,19 @@ impl<'a, T: VariantStructBinaryDeserialize<'a>> Iterator for ElfRecordsTableIter
             return None;
         }
         self.cur_record_index += 1;
-        Some(T::deserialize(&mut self.deserializer, &self.parser).map_err(|e| e.into()))
+        Some(
+            T::deserialize(&mut self.deserializer, &self.parser, self.context.clone())
+                .map_err(|e| e.into()),
+        )
     }
 }
 
 pub trait VariantStructBinaryDeserialize<'a>: Sized {
+    type Context: Clone;
     fn deserialize(
         deserializer: &mut BinaryDeserializerFromBufSafe<'a>,
         parser: &ElfParser<'a>,
+        context: Self::Context,
     ) -> core::result::Result<Self, binary_serde::BinarySerdeBufSafeError>;
     fn record_len(file_info: &ElfFileInfo) -> usize;
 }
@@ -435,6 +497,9 @@ pub enum Error {
         expected_size: u64,
         specified_size: u64,
     },
+
+    #[error("section with index {linked_section_index} is sepcified as the linked section of a symbol table section but it is not a string table")]
+    LinkedSectionOfSymbolTableSectionIsNotAStringTable { linked_section_index: usize },
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

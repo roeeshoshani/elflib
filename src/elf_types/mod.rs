@@ -4,8 +4,8 @@ mod relocations;
 pub use codegen::*;
 pub use relocations::*;
 
-use crate::{ElfParser, VariantStructBinaryDeserialize};
-use binary_serde::{BinarySerde, Endianness};
+use crate::{ElfParser, StringTable, VariantStructBinaryDeserialize};
+use binary_serde::{binary_serde_bitfield, BinarySerde, BitfieldBitOrder, Endianness};
 use elflib_macros::{define_raw_struct_by_variants, define_raw_struct_generic_bitlen};
 
 pub const ELF_MAGIC: &[u8] = &[0x7f, b'E', b'L', b'F'];
@@ -82,6 +82,7 @@ define_raw_struct_by_variants! {
         size_in_memory: u64,
         alignment: u64,
     }
+    => ()
 }
 
 define_raw_struct_by_variants! {
@@ -109,6 +110,7 @@ define_raw_struct_by_variants! {
         address_alignemnt: u32,
         entry_size: u32,
     }
+    => ()
 }
 
 define_raw_struct_generic_bitlen! {
@@ -128,6 +130,52 @@ define_raw_struct_generic_bitlen! {
         section_headers_amount: u16,
         section_names_section_index: u16,
     }
+    => ()
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[binary_serde_bitfield(order = BitfieldBitOrder::LsbFirst)]
+pub struct SymbolInfo {
+    #[bits(4)]
+    pub ty: SymbolType,
+
+    #[bits(4)]
+    pub binding: SymbolBinding,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[binary_serde_bitfield(order = BitfieldBitOrder::LsbFirst)]
+pub struct SymbolOtherInfo {
+    #[bits(2)]
+    pub visibility: SymbolVisibility,
+
+    #[bits(6)]
+    pub padding: u8,
+}
+
+#[derive(Debug, Clone)]
+pub struct SymbolRefContext<'a> {
+    pub(crate) string_table: StringTable<'a>,
+}
+
+define_raw_struct_by_variants! {
+    struct Symbol32 {
+        name_index_in_string_table: u32,
+        value: u32,
+        size: u32,
+        info: SymbolInfo,
+        other_info: SymbolOtherInfo,
+        related_section_index: u16,
+    }
+    struct Symbol64 {
+        name_index_in_string_table: u32,
+        info: SymbolInfo,
+        other_info: SymbolOtherInfo,
+        related_section_index: u16,
+        value: u64,
+        size: u64,
+    }
+    => SymbolRefContext<'a>
 }
 
 #[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]

@@ -21,6 +21,7 @@ define_raw_struct_by_variants! {
         ty: RelocationType,
         symbol_index: u32,
     }
+    => ()
 }
 
 impl TryFrom<RelInfoRegular64> for RelInfoRegular32 {
@@ -51,6 +52,7 @@ define_raw_struct_by_variants! {
         offset: u64,
         info: RelInfoRegular64,
     }
+    => ()
 }
 
 define_raw_struct_by_variants! {
@@ -64,6 +66,7 @@ define_raw_struct_by_variants! {
         info: RelInfoRegular64,
         addend: i64,
     }
+    => ()
 }
 
 impl RelaRegular32 {
@@ -182,9 +185,11 @@ pub enum Rel {
     RelRegular(RelRegular),
 }
 impl<'a> VariantStructBinaryDeserialize<'a> for Rel {
+    type Context = ();
     fn deserialize(
         deserializer: &mut binary_serde::BinaryDeserializerFromBufSafe<'a>,
         parser: &ElfParser<'a>,
+        _context: (),
     ) -> core::result::Result<Self, binary_serde::BinarySerdeBufSafeError> {
         match (parser.file_info.arch, parser.file_info.bit_length) {
             (Architechture::Mips, ArchBitLength::Arch64Bit) => {
@@ -193,6 +198,7 @@ impl<'a> VariantStructBinaryDeserialize<'a> for Rel {
             _ => Ok(Self::RelRegular(RelRegular::deserialize(
                 deserializer,
                 parser,
+                (),
             )?)),
         }
     }
@@ -256,9 +262,11 @@ impl From<Rela> for GenericRel {
     }
 }
 impl<'a> VariantStructBinaryDeserialize<'a> for Rela {
+    type Context = ();
     fn deserialize(
         deserializer: &mut binary_serde::BinaryDeserializerFromBufSafe<'a>,
         parser: &ElfParser<'a>,
+        _context: (),
     ) -> core::result::Result<Self, binary_serde::BinarySerdeBufSafeError> {
         match (parser.file_info.arch, parser.file_info.bit_length) {
             (Architechture::Mips, ArchBitLength::Arch64Bit) => {
@@ -267,6 +275,7 @@ impl<'a> VariantStructBinaryDeserialize<'a> for Rela {
             _ => Ok(Self::RelaRegular(RelaRegular::deserialize(
                 deserializer,
                 parser,
+                (),
             )?)),
         }
     }

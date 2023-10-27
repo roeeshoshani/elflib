@@ -10,12 +10,17 @@ fn main() -> elflib::Result<()> {
     let sections = parser.section_headers()?;
     for section_res in sections {
         let section = section_res?;
-        println!("{:?}", section.data()?);
         match section.data()? {
-            elflib::SectionData::GenericRel(rel_section) => {
+            elflib::SectionData::RelocationEntries(rel_section) => {
                 for rel_entry_res in rel_section {
                     let rel_entry = rel_entry_res?;
                     println!("{:?}", rel_entry.as_rel_or_rela());
+                }
+            }
+            elflib::SectionData::SymbolTable(symbol_entries) => {
+                for symbol_res in symbol_entries {
+                    let symbol = symbol_res?;
+                    println!("{:?}", symbol.name());
                 }
             }
             _ => {}

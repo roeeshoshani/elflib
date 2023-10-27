@@ -1304,6 +1304,8 @@ bitflags! {
 }
 impl_binary_serde_for_bitflags_ty! {SectionHeaderFlags}
 
+#[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum SymbolType {
     /// Set for functions called at reset time.
     RenesasEntry = 0xe,
@@ -1378,6 +1380,8 @@ impl SymbolType {
     pub const GnuIfunc: Self = Self::_LoosOrGnuIfunc;
 }
 
+#[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum SymbolBinding {
     /// VMS weak symbol.
     VmsWeak = 0xb,
@@ -1418,6 +1422,8 @@ impl SymbolBinding {
     pub const MipsSplitCommon: Self = Self::_LoprocOrMipsSplitCommon;
 }
 
+#[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum SymbolVisibility {
     /// Visibility is specified by binding type
     Default = 0x0,
