@@ -261,14 +261,22 @@ impl<'a> SymbolRef<'a> {
     pub fn name(&self) -> Result<&'a str> {
         match self.info().ty {
             elf_types::SymbolType::Section => self
-                .parser
-                .section_headers()?
-                .get(self.related_section_index() as usize)?
+                .section()?
+                .ok_or(Error::SectionSymbolHasNoSectionIndex)?
                 .name(),
             _ => self
                 .context
                 .string_table
                 .string_at_offset(self.name_index_in_string_table() as usize, "symbol name"),
+        }
+    }
+
+    pub fn section(&self) -> Result<Option<SectionHeaderRef<'a>>> {
+        match self.related_section_index() {
+            SHN_UNDEF => Ok(None),
+            section_index => Ok(Some(
+                self.parser.section_headers()?.get(section_index as usize)?,
+            )),
         }
     }
 }
@@ -535,6 +543,9 @@ pub enum Error {
 
     #[error("section with index {linked_section_index} is sepcified as the linked section of a relocation section but it is not a symbol table")]
     LinkedSectionOfRelocationSectionIsNotASymbolTable { linked_section_index: usize },
+
+    #[error("symbol of type section has no section index")]
+    SectionSymbolHasNoSectionIndex,
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
