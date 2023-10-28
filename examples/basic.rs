@@ -11,8 +11,8 @@ fn main() -> elflib::Result<()> {
     for section_res in sections {
         let section = section_res?;
         match section.data()? {
-            elflib::SectionData::RelocationEntries(rel_section) => {
-                for rel_entry_res in rel_section {
+            elflib::SectionData::RelocationSection(rel_section) => {
+                for rel_entry_res in rel_section.entries {
                     let rel_entry = rel_entry_res?;
                     println!("{:?}", rel_entry.as_rel_or_rela());
                 }
