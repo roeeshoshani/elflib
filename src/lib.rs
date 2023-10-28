@@ -175,7 +175,7 @@ impl<'a> SectionHeaderRef<'a> {
             .get(self.link() as usize)?
             .data()?
         {
-            SectionData::SymbolTable(symbols) => symbols,
+            SectionData::SymbolTable(symbols) | SectionData::DynamicSymbolTable(symbols) => symbols,
             _ => {
                 return Err(Error::LinkedSectionOfRelocationSectionIsNotASymbolTable {
                     linked_section_index: self.link() as usize,
@@ -187,6 +187,30 @@ impl<'a> SectionHeaderRef<'a> {
             linked_symbol_table,
             relocated_section: self.parser.section_headers()?.get(self.info() as usize)?,
         })
+    }
+
+    fn parse_as_symbol_table(&self) -> Result<SymbolEntries<'a>> {
+        self.parser.records_table(
+            self.offset() as usize,
+            self.entry_size(),
+            (self.size() / self.entry_size()) as usize,
+            "symbol table entry",
+            SymbolRefContext {
+                string_table: match self
+                    .parser
+                    .section_headers()?
+                    .get(self.link() as usize)?
+                    .data()?
+                {
+                    SectionData::StringTable(string_table) => string_table,
+                    _ => {
+                        return Err(Error::LinkedSectionOfSymbolTableSectionIsNotAStringTable {
+                            linked_section_index: self.link() as usize,
+                        })
+                    }
+                },
+            },
+        )
     }
 
     pub fn data(&self) -> Result<SectionData<'a>> {
@@ -216,30 +240,11 @@ impl<'a> SectionHeaderRef<'a> {
                     )?,
                 ))?,
             )),
-            SectionHeaderType::Symtab => Ok(SectionData::SymbolTable(
-                self.parser.records_table(
-                    self.offset() as usize,
-                    self.entry_size(),
-                    (self.size() / self.entry_size()) as usize,
-                    "symbol table entry",
-                    SymbolRefContext {
-                        string_table: match self
-                            .parser
-                            .section_headers()?
-                            .get(self.link() as usize)?
-                            .data()?
-                        {
-                            SectionData::StringTable(string_table) => string_table,
-                            _ => {
-                                return Err(
-                                    Error::LinkedSectionOfSymbolTableSectionIsNotAStringTable {
-                                        linked_section_index: self.link() as usize,
-                                    },
-                                )
-                            }
-                        },
-                    },
-                )?,
+            SectionHeaderType::Symtab => {
+                Ok(SectionData::SymbolTable(self.parse_as_symbol_table()?))
+            }
+            SectionHeaderType::Dynsym => Ok(SectionData::DynamicSymbolTable(
+                self.parse_as_symbol_table()?,
             )),
             _ => Ok(SectionData::UnknownSectionType),
         }
@@ -250,6 +255,7 @@ impl<'a> SectionHeaderRef<'a> {
 pub enum SectionData<'a> {
     StringTable(StringTable<'a>),
     SymbolTable(SymbolEntries<'a>),
+    DynamicSymbolTable(SymbolEntries<'a>),
     RelocationSection(GenericRelSection<'a>),
     UnknownSectionType,
 }
