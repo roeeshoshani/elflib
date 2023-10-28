@@ -165,20 +165,28 @@ impl<'a> SectionHeaderRef<'a> {
             .string_at_offset(self.name_offset() as usize, "section name")
     }
 
-    fn generic_rel_section_get_linked_symbol_table(&self) -> Result<SymbolEntries<'a>> {
-        match self
+    fn generic_rel_section_build(
+        &self,
+        entries: GenericRelEntries<'a>,
+    ) -> Result<GenericRelSection<'a>> {
+        let linked_symbol_table = match self
             .parser
             .section_headers()?
             .get(self.link() as usize)?
             .data()?
         {
-            SectionData::SymbolTable(symbols) => Ok(symbols),
+            SectionData::SymbolTable(symbols) => symbols,
             _ => {
                 return Err(Error::LinkedSectionOfRelocationSectionIsNotASymbolTable {
                     linked_section_index: self.link() as usize,
                 })
             }
-        }
+        };
+        Ok(GenericRelSection {
+            entries,
+            linked_symbol_table,
+            relocated_section: self.parser.section_headers()?.get(self.info() as usize)?,
+        })
     }
 
     pub fn data(&self) -> Result<SectionData<'a>> {
@@ -186,26 +194,28 @@ impl<'a> SectionHeaderRef<'a> {
             SectionHeaderType::Strtab => Ok(SectionData::StringTable(StringTable {
                 content: self.content()?.into(),
             })),
-            SectionHeaderType::Rela => Ok(SectionData::RelocationSection(GenericRelSection {
-                entries: GenericRelEntries::RelaEntries(self.parser.records_table(
-                    self.offset() as usize,
-                    self.entry_size(),
-                    (self.size() / self.entry_size()) as usize,
-                    "relocation entry with addend",
-                    (),
-                )?),
-                linked_symbol_table: self.generic_rel_section_get_linked_symbol_table()?,
-            })),
-            SectionHeaderType::Rel => Ok(SectionData::RelocationSection(GenericRelSection {
-                entries: GenericRelEntries::RelEntries(self.parser.records_table(
-                    self.offset() as usize,
-                    self.entry_size(),
-                    (self.size() / self.entry_size()) as usize,
-                    "relocation entry",
-                    (),
-                )?),
-                linked_symbol_table: self.generic_rel_section_get_linked_symbol_table()?,
-            })),
+            SectionHeaderType::Rela => Ok(SectionData::RelocationSection(
+                self.generic_rel_section_build(GenericRelEntries::RelaEntries(
+                    self.parser.records_table(
+                        self.offset() as usize,
+                        self.entry_size(),
+                        (self.size() / self.entry_size()) as usize,
+                        "relocation entry with addend",
+                        (),
+                    )?,
+                ))?,
+            )),
+            SectionHeaderType::Rel => Ok(SectionData::RelocationSection(
+                self.generic_rel_section_build(GenericRelEntries::RelEntries(
+                    self.parser.records_table(
+                        self.offset() as usize,
+                        self.entry_size(),
+                        (self.size() / self.entry_size()) as usize,
+                        "relocation entry",
+                        (),
+                    )?,
+                ))?,
+            )),
             SectionHeaderType::Symtab => Ok(SectionData::SymbolTable(
                 self.parser.records_table(
                     self.offset() as usize,
@@ -267,6 +277,7 @@ impl<'a> SymbolRef<'a> {
 pub struct GenericRelSection<'a> {
     pub entries: GenericRelEntries<'a>,
     pub linked_symbol_table: SymbolEntries<'a>,
+    pub relocated_section: SectionHeaderRef<'a>,
 }
 
 #[derive(Debug, Clone)]
