@@ -7,6 +7,7 @@ pub use elf_types::*;
 use thiserror_no_std::Error;
 
 pub const SHN_UNDEF: u16 = 0;
+pub const SHN_ABS: u16 = 0xfff1;
 
 #[derive(Debug, Clone)]
 pub struct ElfParser<'a> {
@@ -268,6 +269,7 @@ impl<'a> SymbolRef<'a> {
         match self.info().ty {
             elf_types::SymbolType::Section => self
                 .section()?
+                .as_optional_section()
                 .ok_or(Error::SectionSymbolHasNoSectionIndex)?
                 .name(),
             _ => self
@@ -277,12 +279,32 @@ impl<'a> SymbolRef<'a> {
         }
     }
 
-    pub fn section(&self) -> Result<Option<SectionHeaderRef<'a>>> {
+    pub fn section(&self) -> Result<SymbolSection<'a>> {
         match self.related_section_index() {
-            SHN_UNDEF => Ok(None),
-            section_index => Ok(Some(
+            SHN_UNDEF => Ok(SymbolSection::UndefinedSection),
+            SHN_ABS => Ok(SymbolSection::AbsoluteSymbol),
+            section_index => Ok(SymbolSection::Section(
                 self.parser.section_headers()?.get(section_index as usize)?,
             )),
+        }
+    }
+}
+
+pub enum SymbolSection<'a> {
+    /// the symbol is not defined relative to any section
+    UndefinedSection,
+
+    /// the symbol is absolute.
+    AbsoluteSymbol,
+
+    Section(SectionHeaderRef<'a>),
+}
+impl<'a> SymbolSection<'a> {
+    pub fn as_optional_section(self) -> Option<SectionHeaderRef<'a>> {
+        match self {
+            SymbolSection::UndefinedSection => None,
+            SymbolSection::AbsoluteSymbol => None,
+            SymbolSection::Section(section) => Some(section),
         }
     }
 }
