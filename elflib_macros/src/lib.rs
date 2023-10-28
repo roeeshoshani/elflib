@@ -154,7 +154,9 @@ pub fn define_raw_struct_by_variants(
                             if sorted_types_strings
                                 == [format!("{prefix}32"), format!("{prefix}64")]
                             {
-                                // all good, it's just 2 different size variants of the same struct
+                                // all good, it's just 2 different size variants of the same struct.
+                                // use the larger variant as the common case.
+                                *expected_ty = syn::parse_str(&format!("{prefix}64")).unwrap();
                                 *are_all_fields_the_same = false;
                             } else {
                                 // type mismatch
