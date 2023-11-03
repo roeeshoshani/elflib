@@ -2,6 +2,12 @@
 name = "elflib_macros"
 version = "0.1.0"
 edition = "2021"
+authors = ["Roee Shoshani"]
+description = "a library for parsing elf files"
+repository = "https://github.com/roeeshoshani/elflib"
+license = "MIT"
+keywords = ["binary", "deserialization", "parse", "elf", "format"]
+categories = ["embedded", "encoding", "no-std", "parsing"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
