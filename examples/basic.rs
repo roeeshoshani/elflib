@@ -14,7 +14,7 @@ fn main() -> elflib::Result<()> {
             elflib::SectionData::RelocationSection(rel_section) => {
                 for rel_entry_res in rel_section.entries {
                     let rel_entry = rel_entry_res?;
-                    println!("{:?}", rel_entry.as_rel_or_rela());
+                    println!("{:?}", rel_entry);
                 }
             }
             elflib::SectionData::SymbolTable(symbol_entries) => {

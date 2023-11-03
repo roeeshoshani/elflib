@@ -7,8 +7,8 @@ use binary_serde::{BinaryDeserializerFromBufSafe, Endianness};
 pub use elf_types::*;
 use thiserror_no_std::Error;
 
-pub const SHN_UNDEF: u16 = 0;
-pub const SHN_ABS: u16 = 0xfff1;
+const SHN_UNDEF: u16 = 0;
+const SHN_ABS: u16 = 0xfff1;
 
 #[derive(Debug, Clone)]
 pub struct ElfParser<'a> {
