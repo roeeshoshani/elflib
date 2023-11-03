@@ -1859,6 +1859,7 @@ impl DynamicTag {
     pub const MipsNum: Self = Self::_ProcnumOrMipsNum;
 }
 
+#[repr(u32)]
 pub enum NoteType {
     /// Object module name, version, and date/time Or HpCompiler Or Contains copy of prstatus struct Or Has a struct procinfo Or Spu Or Contains a version string Or GnuAbiTag Or NetbsdIdent Or OpenbsdIdent Or FreebsdAbiTag Or Force enable Mprotect
     _VmsMhdOrHpCompilerOrPrstatusOrNetbsdcoreProcinfoOrSpuOrVersionOrGnuAbiTagOrNetbsdIdentOrOpenbsdIdentOrFreebsdAbiTagOrNetbsdPaxMprotect =

@@ -1,6 +1,7 @@
+#![no_std]
 mod elf_types;
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use binary_serde::{BinaryDeserializerFromBufSafe, Endianness};
 pub use elf_types::*;

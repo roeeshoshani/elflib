@@ -15,7 +15,7 @@ pub const ELF_IDENT_PADDING_SIZE: usize = EI_NIDENT - ElfIdentHeader::SERIALIZED
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct DebugIgnore<T>(pub(crate) T);
 impl<T> core::fmt::Debug for DebugIgnore<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "...")
     }
 }
