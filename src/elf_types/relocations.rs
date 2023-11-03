@@ -211,6 +211,19 @@ impl<'a> VariantStructBinaryDeserialize<'a> for Rel {
     }
 }
 impl Rel {
+    pub fn offset(&self) -> u64 {
+        match self {
+            Rel::RelMips64(x) => x.offset,
+            Rel::RelRegular(x) => x.offset(),
+        }
+    }
+
+    pub fn set_offset(&mut self, new_value: u64) {
+        match self {
+            Rel::RelMips64(x) => x.offset = new_value,
+            Rel::RelRegular(x) => x.set_offset(new_value),
+        }
+    }
     pub fn to_generic_rel(self) -> GenericRel {
         GenericRel {
             rel: self,
@@ -230,6 +243,19 @@ pub enum Rela {
     RelaRegular(RelaRegular),
 }
 impl Rela {
+    pub fn offset(&self) -> u64 {
+        match self {
+            Rela::RelaMips64(x) => x.offset,
+            Rela::RelaRegular(x) => x.offset(),
+        }
+    }
+
+    pub fn set_offset(&mut self, new_value: u64) {
+        match self {
+            Rela::RelaMips64(x) => x.offset = new_value,
+            Rela::RelaRegular(x) => x.set_offset(new_value),
+        }
+    }
     pub fn to_rel_and_addend(self) -> (Rel, i64) {
         match self {
             Rela::RelaMips64(rela_mips64) => {
