@@ -344,17 +344,4 @@ impl GenericRel {
     pub fn as_rela(self) -> Option<Rela> {
         Some(Rela::from_rel_and_addend(self.rel, self.addend?))
     }
-
-    pub fn as_rel_or_rela(self) -> RelOrRela {
-        match self.addend {
-            Some(addend) => RelOrRela::Rela(Rela::from_rel_and_addend(self.rel, addend)),
-            None => RelOrRela::Rel(self.rel),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum RelOrRela {
-    Rel(Rel),
-    Rela(Rela),
 }
