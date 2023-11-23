@@ -1,7 +1,7 @@
-use binary_serde::{binary_serde_bitfield, BinarySerde, BitfieldBitOrder};
+use binary_serde::{binary_serde_bitfield, BinarySerde, BitfieldBitOrder, Endianness};
 use elflib_macros::define_raw_struct_by_variants;
 
-use crate::{ElfParser, VariantStructBinaryDeserialize};
+use crate::{ElfParser, VariantStructBinarySerde};
 
 use super::{ArchBitLength, Architechture, ElfFileInfo, RelocationType, RelocationTypeU8};
 
@@ -184,7 +184,7 @@ pub enum Rel {
     RelMips64(RelMips64),
     RelRegular(RelRegular),
 }
-impl<'a> VariantStructBinaryDeserialize<'a> for Rel {
+impl<'a> VariantStructBinarySerde<'a> for Rel {
     type Context = ();
     fn deserialize(
         deserializer: &mut binary_serde::BinaryDeserializerFromBufSafe<'a>,
@@ -207,6 +207,16 @@ impl<'a> VariantStructBinaryDeserialize<'a> for Rel {
         match (file_info.arch, file_info.bit_length) {
             (Architechture::Mips, ArchBitLength::Arch64Bit) => RelMips64::SERIALIZED_SIZE,
             _ => RelRegular::record_len(file_info),
+        }
+    }
+
+    fn serialize(&self, buf: &mut [u8], endianness: Endianness) {
+        match self {
+            Rel::RelMips64(x) => x.binary_serialize(buf, endianness),
+            Rel::RelRegular(x) => match x {
+                RelRegular::RelRegular32(x) => x.binary_serialize(buf, endianness),
+                RelRegular::RelRegular64(x) => x.binary_serialize(buf, endianness),
+            },
         }
     }
 }
@@ -287,7 +297,7 @@ impl From<Rela> for GenericRel {
         value.to_generic_rel()
     }
 }
-impl<'a> VariantStructBinaryDeserialize<'a> for Rela {
+impl<'a> VariantStructBinarySerde<'a> for Rela {
     type Context = ();
     fn deserialize(
         deserializer: &mut binary_serde::BinaryDeserializerFromBufSafe<'a>,
@@ -310,6 +320,16 @@ impl<'a> VariantStructBinaryDeserialize<'a> for Rela {
         match (file_info.arch, file_info.bit_length) {
             (Architechture::Mips, ArchBitLength::Arch64Bit) => RelaMips64::SERIALIZED_SIZE,
             _ => RelaRegular::record_len(file_info),
+        }
+    }
+
+    fn serialize(&self, buf: &mut [u8], endianness: Endianness) {
+        match self {
+            Rela::RelaMips64(x) => x.binary_serialize(buf, endianness),
+            Rela::RelaRegular(x) => match x {
+                RelaRegular::RelaRegular32(x) => x.binary_serialize(buf, endianness),
+                RelaRegular::RelaRegular64(x) => x.binary_serialize(buf, endianness),
+            },
         }
     }
 }

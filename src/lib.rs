@@ -71,7 +71,7 @@ impl<'a> ElfParser<'a> {
         Ok(ElfHeader::deserialize(&mut deserializer, &self, ())?)
     }
 
-    fn records_table<T: VariantStructBinaryDeserialize<'a>>(
+    fn records_table<T: VariantStructBinarySerde<'a>>(
         &self,
         start_offset: usize,
         specified_record_len: u64,
@@ -416,7 +416,7 @@ pub type SectionHeaders<'a> = ElfRecordsTable<'a, SectionHeaderRef<'a>>;
 pub type SectionHeadersIter<'a> = ElfRecordsTableIter<'a, SectionHeaderRef<'a>>;
 
 #[derive(Debug, Clone)]
-pub struct ElfRecordsTable<'a, T: VariantStructBinaryDeserialize<'a>> {
+pub struct ElfRecordsTable<'a, T: VariantStructBinarySerde<'a>> {
     parser: ElfParser<'a>,
     table_start_offset: usize,
     table_records_amount: usize,
@@ -425,7 +425,7 @@ pub struct ElfRecordsTable<'a, T: VariantStructBinaryDeserialize<'a>> {
     phantom: PhantomData<T>,
     context: T::Context,
 }
-impl<'a, T: VariantStructBinaryDeserialize<'a>> ElfRecordsTable<'a, T> {
+impl<'a, T: VariantStructBinarySerde<'a>> ElfRecordsTable<'a, T> {
     pub fn get(&self, index: usize) -> Result<T> {
         if index > self.table_records_amount {
             return Err(Error::RecordIndexOutOfBounds {
@@ -458,7 +458,7 @@ impl<'a, T: VariantStructBinaryDeserialize<'a>> ElfRecordsTable<'a, T> {
         }
     }
 }
-impl<'a, T: VariantStructBinaryDeserialize<'a>> IntoIterator for ElfRecordsTable<'a, T> {
+impl<'a, T: VariantStructBinarySerde<'a>> IntoIterator for ElfRecordsTable<'a, T> {
     type Item = Result<T>;
 
     type IntoIter = ElfRecordsTableIter<'a, T>;
@@ -468,7 +468,7 @@ impl<'a, T: VariantStructBinaryDeserialize<'a>> IntoIterator for ElfRecordsTable
     }
 }
 
-impl<'r, 'a, T: VariantStructBinaryDeserialize<'a>> IntoIterator for &'r ElfRecordsTable<'a, T> {
+impl<'r, 'a, T: VariantStructBinarySerde<'a>> IntoIterator for &'r ElfRecordsTable<'a, T> {
     type Item = Result<T>;
 
     type IntoIter = ElfRecordsTableIter<'a, T>;
@@ -479,7 +479,7 @@ impl<'r, 'a, T: VariantStructBinaryDeserialize<'a>> IntoIterator for &'r ElfReco
 }
 
 #[derive(Debug, Clone)]
-pub struct ElfRecordsTableIter<'a, T: VariantStructBinaryDeserialize<'a>> {
+pub struct ElfRecordsTableIter<'a, T: VariantStructBinarySerde<'a>> {
     parser: ElfParser<'a>,
     table_records_amount: usize,
     cur_record_index: usize,
@@ -487,7 +487,7 @@ pub struct ElfRecordsTableIter<'a, T: VariantStructBinaryDeserialize<'a>> {
     context: T::Context,
     phantom: PhantomData<T>,
 }
-impl<'a, T: VariantStructBinaryDeserialize<'a>> Iterator for ElfRecordsTableIter<'a, T> {
+impl<'a, T: VariantStructBinarySerde<'a>> Iterator for ElfRecordsTableIter<'a, T> {
     type Item = Result<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -502,13 +502,14 @@ impl<'a, T: VariantStructBinaryDeserialize<'a>> Iterator for ElfRecordsTableIter
     }
 }
 
-pub trait VariantStructBinaryDeserialize<'a>: Sized {
+pub trait VariantStructBinarySerde<'a>: Sized {
     type Context: Clone;
     fn deserialize(
         deserializer: &mut BinaryDeserializerFromBufSafe<'a>,
         parser: &ElfParser<'a>,
         context: Self::Context,
     ) -> core::result::Result<Self, binary_serde::BinarySerdeBufSafeError>;
+    fn serialize(&self, buf: &mut [u8], endianness: Endianness);
     fn record_len(file_info: &ElfFileInfo) -> usize;
 }
 

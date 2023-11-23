@@ -4,7 +4,7 @@ mod relocations;
 pub use codegen::*;
 pub use relocations::*;
 
-use crate::{ElfParser, StringTable, VariantStructBinaryDeserialize};
+use crate::{ElfParser, StringTable, VariantStructBinarySerde};
 use binary_serde::{binary_serde_bitfield, BinarySerde, BitfieldBitOrder, Endianness};
 use elflib_macros::{define_raw_struct_by_variants, define_raw_struct_generic_bitlen};
 

@@ -275,8 +275,8 @@ fn gen_ref_wrapper(
     };
     let deserialize_impl = quote! {
         #[automatically_derived]
-        impl<'a> VariantStructBinaryDeserialize<'a> for #wrapper_ident<'a>
-            where #wrapped_type_ident: VariantStructBinaryDeserialize<'a, Context = ()>
+        impl<'a> VariantStructBinarySerde<'a> for #wrapper_ident<'a>
+            where #wrapped_type_ident: VariantStructBinarySerde<'a, Context = ()>
         {
             type Context = #context_ty;
             fn deserialize(
@@ -292,6 +292,9 @@ fn gen_ref_wrapper(
             }
             fn record_len(file_info: &ElfFileInfo) -> usize {
                 #wrapped_type_ident::record_len(file_info)
+            }
+            fn serialize(&self, buf: &mut [u8], endianness: ::binary_serde::Endianness) {
+                self.raw.serialize(buf, endianness);
             }
         }
     };
@@ -418,7 +421,7 @@ fn gen_raw_struct_by_variants(
         let self_64 = quote::format_ident!("{}64", enum_ident);
         quote! {
             #[automatically_derived]
-            impl<'a> VariantStructBinaryDeserialize<'a> for #enum_ident {
+            impl<'a> VariantStructBinarySerde<'a> for #enum_ident {
                 type Context = ();
                 fn deserialize(
                     deserializer: &mut ::binary_serde::BinaryDeserializerFromBufSafe<'a>,
@@ -434,6 +437,12 @@ fn gen_raw_struct_by_variants(
                     match file_info.bit_length {
                         ArchBitLength::Arch32Bit => <#self_32 as BinarySerde>::SERIALIZED_SIZE,
                         ArchBitLength::Arch64Bit => <#self_64 as BinarySerde>::SERIALIZED_SIZE,
+                    }
+                }
+                fn serialize(&self, buf: &mut [u8], endianness: ::binary_serde::Endianness) {
+                    match self {
+                        Self::#self_32(x) => x.binary_serialize(buf, endianness),
+                        Self::#self_64(x) => x.binary_serialize(buf, endianness),
                     }
                 }
             }
