@@ -52,6 +52,10 @@ impl<'a> ElfParser<'a> {
         Ok(parser)
     }
 
+    pub fn data(&self) -> &'a [u8] {
+        &self.data
+    }
+
     fn deserializer(&self) -> BinaryDeserializerFromBufSafe<'a> {
         BinaryDeserializerFromBufSafe::new(self.data.0, self.file_info.endianness)
     }
