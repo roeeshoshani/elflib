@@ -178,9 +178,9 @@ impl<'a> SectionHeaderRef<'a> {
     ) -> Result<GenericRelSection<'a>> {
         Ok(GenericRelSection {
             entries,
-            relocated_section: self.parser.section_headers()?.get(self.info() as usize)?,
-            parser: self.parser.clone(),
+            relocated_section_index: self.info() as usize,
             linked_symbol_table_index: self.link() as usize,
+            parser: self.parser.clone(),
         })
     }
 
@@ -308,9 +308,14 @@ pub struct GenericRelSection<'a> {
     parser: ElfParser<'a>,
     pub entries: GenericRelEntries<'a>,
     pub linked_symbol_table_index: usize,
-    pub relocated_section: SectionHeaderRef<'a>,
+    pub relocated_section_index: usize,
 }
 impl<'a> GenericRelSection<'a> {
+    pub fn relocated_section(&self) -> Result<SectionHeaderRef<'a>> {
+        self.parser
+            .section_headers()?
+            .get(self.relocated_section_index)
+    }
     pub fn linked_symbol_table(&self) -> Result<SymbolEntries<'a>> {
         match self
             .parser
