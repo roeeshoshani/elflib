@@ -430,6 +430,9 @@ pub struct ElfRecordsTable<'a, T: VariantStructBinarySerde<'a>> {
     context: T::Context,
 }
 impl<'a, T: VariantStructBinarySerde<'a>> ElfRecordsTable<'a, T> {
+    pub fn len(&self) -> usize {
+        self.table_records_amount
+    }
     pub fn get(&self, index: usize) -> Result<T> {
         if index > self.table_records_amount {
             return Err(Error::RecordIndexOutOfBounds {
