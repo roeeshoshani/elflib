@@ -176,23 +176,11 @@ impl<'a> SectionHeaderRef<'a> {
         &self,
         entries: GenericRelEntries<'a>,
     ) -> Result<GenericRelSection<'a>> {
-        let linked_symbol_table = match self
-            .parser
-            .section_headers()?
-            .get(self.link() as usize)?
-            .data()?
-        {
-            SectionData::SymbolTable(symbols) | SectionData::DynamicSymbolTable(symbols) => symbols,
-            _ => {
-                return Err(Error::LinkedSectionOfRelocationSectionIsNotASymbolTable {
-                    linked_section_index: self.link() as usize,
-                })
-            }
-        };
         Ok(GenericRelSection {
             entries,
-            linked_symbol_table,
             relocated_section: self.parser.section_headers()?.get(self.info() as usize)?,
+            parser: self.parser.clone(),
+            linked_symbol_table_index: self.link() as usize,
         })
     }
 
@@ -317,9 +305,27 @@ impl<'a> SymbolSection<'a> {
 
 #[derive(Debug, Clone)]
 pub struct GenericRelSection<'a> {
+    parser: ElfParser<'a>,
     pub entries: GenericRelEntries<'a>,
-    pub linked_symbol_table: SymbolEntries<'a>,
+    pub linked_symbol_table_index: usize,
     pub relocated_section: SectionHeaderRef<'a>,
+}
+impl<'a> GenericRelSection<'a> {
+    pub fn linked_symbol_table(&self) -> Result<SymbolEntries<'a>> {
+        match self
+            .parser
+            .section_headers()?
+            .get(self.linked_symbol_table_index)?
+            .data()?
+        {
+            SectionData::SymbolTable(symbols) | SectionData::DynamicSymbolTable(symbols) => {
+                Ok(symbols)
+            }
+            _ => Err(Error::LinkedSectionOfRelocationSectionIsNotASymbolTable {
+                linked_section_index: self.linked_symbol_table_index as usize,
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
