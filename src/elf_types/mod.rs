@@ -182,6 +182,7 @@ define_raw_struct_by_variants! {
 #[repr(u8)]
 pub enum AbiVersion {
     Valid = 0,
+    Unknown = 1,
 }
 
 #[derive(Debug, BinarySerde, Clone, Copy, PartialEq, Eq, Hash)]
